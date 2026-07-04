@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct i2MessageApp: App {
-    @StateObject private var model = AppViewModel()
+    @StateObject private var model = AppViewModel(dependencies: .live())
 
     var body: some Scene {
         WindowGroup {
@@ -61,7 +61,7 @@ struct i2MessageApp: App {
                 .keyboardShortcut("p", modifiers: [.command, .shift])
             }
 
-            CommandMenu("Mock") {
+            CommandMenu("Diagnostics") {
                 Button("Rebuild Local Indexes") {
                     Task { await model.perform(.rebuildIndexes) }
                 }

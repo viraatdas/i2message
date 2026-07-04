@@ -216,27 +216,8 @@ struct SidebarView: View {
             }
 
             IndexingStatusView(progress: model.indexingProgress)
-
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(model.permissionSnapshot.statuses.prefix(3)) { status in
-                    HStack(spacing: 8) {
-                        PermissionStateIcon(state: status.state)
-
-                        Text(status.permission.displayName)
-                            .font(.caption)
-                            .lineLimit(1)
-
-                        Spacer(minLength: 8)
-
-                        Text(status.state.shortLabel)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            }
-            .padding(.horizontal, 4)
+            PermissionsMiniFooter(snapshot: model.permissionSnapshot)
+            ActionAvailabilityFooter(snapshot: model.actionAvailabilitySnapshot)
         }
         .padding(10)
     }
@@ -426,6 +407,112 @@ private struct SearchMiniResults: View {
     }
 }
 
+private struct PermissionsMiniFooter: View {
+    let snapshot: PermissionSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(snapshot.statuses.prefix(3)) { status in
+                HStack(spacing: 8) {
+                    PermissionStateIcon(state: status.state)
+
+                    Text(status.permission.displayName)
+                        .font(.caption)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    Text(status.state.shortLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct ActionAvailabilityFooter: View {
+    let snapshot: MessagingActionAvailabilitySnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist.checked")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+
+                Text("Parity")
+                    .font(.caption.weight(.medium))
+
+                Spacer()
+
+                Text("\(availableCount)/\(snapshot.statuses.count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            if let attentionStatus {
+                HStack(spacing: 8) {
+                    Image(systemName: iconName(for: attentionStatus.state))
+                        .foregroundStyle(color(for: attentionStatus.state))
+                        .frame(width: 16)
+
+                    Text(attentionStatus.kind.displayName)
+                        .font(.caption)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 8)
+
+                    Text(attentionStatus.state.shortLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var availableCount: Int {
+        snapshot.statuses.filter { $0.state == .available }.count
+    }
+
+    private var attentionStatus: MessagingActionAvailability? {
+        snapshot.statuses.first { $0.state != .available }
+    }
+
+    private func iconName(for state: MessagingActionAvailabilityState) -> String {
+        switch state {
+        case .available:
+            return "checkmark.circle.fill"
+        case .requiresPermission, .requiresUserHandoff, .degraded:
+            return "exclamationmark.circle"
+        case .unsupported:
+            return "slash.circle"
+        case .unavailable:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func color(for state: MessagingActionAvailabilityState) -> Color {
+        switch state {
+        case .available:
+            return .green
+        case .requiresPermission, .requiresUserHandoff, .degraded:
+            return .orange
+        case .unsupported:
+            return .secondary
+        case .unavailable:
+            return .red
+        }
+    }
+}
+
 private extension PermissionState {
     var shortLabel: String {
         switch self {
@@ -439,6 +526,25 @@ private extension PermissionState {
             return "Limited"
         case .unsupported:
             return "N/A"
+        }
+    }
+}
+
+private extension MessagingActionAvailabilityState {
+    var shortLabel: String {
+        switch self {
+        case .available:
+            return "On"
+        case .requiresPermission:
+            return "Needs OK"
+        case .requiresUserHandoff:
+            return "Handoff"
+        case .degraded:
+            return "Partial"
+        case .unsupported:
+            return "N/A"
+        case .unavailable:
+            return "Off"
         }
     }
 }

@@ -77,6 +77,14 @@ private struct ConversationHeader: View {
             }
 
             Button {
+                Task { await model.openSelectedConversationInMessages() }
+            } label: {
+                Label("Open in Messages", systemImage: "arrow.up.forward.app")
+            }
+            .buttonStyle(.borderless)
+            .help("Open in Messages")
+
+            Button {
                 model.searchConversationScope = conversation.id
                 model.searchQuery = conversation.title
                 model.sidebarDestination = .search
@@ -114,7 +122,7 @@ private struct TranscriptView: View {
             case .empty:
                 EmptyStateView(
                     title: "No messages",
-                    message: "This thread has no loaded mock transcript yet.",
+                    message: "This thread has no loaded transcript yet.",
                     systemImage: "text.bubble"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -406,7 +414,7 @@ private struct ComposerView: View {
             }
 
             HStack(spacing: 8) {
-                Text("Local mock composer")
+                Text(model.isUsingLiveData ? "Messages composer" : "Fixture composer")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let operation = model.sendOperation {

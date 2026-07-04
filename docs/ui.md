@@ -1,16 +1,16 @@
 # i2Message Native UI
 
-The SwiftUI shell is built around `AppViewModel` in `Sources/i2MessageApp/Features/App`. It consumes the foundation protocols from `i2MessageCore` through `AppDependencies`, with mock providers in this UI lane for local development.
+The SwiftUI shell is built around `AppViewModel` in `Sources/i2MessageApp/Features/App`. It consumes the foundation protocols from `i2MessageCore` through `AppDependencies`, with live providers for the app target and fixture providers for previews/tests.
 
 ## Implemented Workflows
 
 - Conversations sidebar with all/unread/pinned/muted filters, unread badges, pinned/muted indicators, attachment hints, stable row sizing, and keyboard next/previous selection.
 - Contacts workspace with handle details, shared thread navigation, contact search, and mock message actions.
 - Transcript detail with lazy `ScrollView`/`LazyVStack` rows, older-page loading, highlighted search result scrolling, tapbacks, edited/failed states, and attachment transfer states.
-- Composer with draft text, mock attachments, drag/drop attachment intake, Command-Return send, validation errors, and mock sent-message insertion through `MessageSending`.
+- Composer with draft text, attachment/drop intake, Command-Return send, validation errors, safe Messages.app send/handoff in live mode, and fixture sent-message insertion in tests/previews through `MessageSending`.
 - Exact search workspace with scoped conversation search, paged result loading, result previews, attachment/contact/conversation hits, and highlighted snippets.
 - Semantic search workspace with local mock snippets, similarity labels, source message counts, hybrid mode, and transcript jump targets.
-- Settings window/sheet for theme, transcript density, page size, permissions, exact/semantic index toggles, privacy defaults, indexing progress, and mock offline/error states.
+- Settings window/sheet for theme, transcript density, page size, permissions, exact/semantic index toggles, privacy defaults, indexing progress, and diagnostics/offline/error states.
 - Command palette for new message, search, sidebar filter focus, conversation navigation, semantic toggle, settings, local index rebuild, offline mode, and error preview.
 - Loading skeletons, empty states, error banners, permission states, offline cache banner, and indexing progress states.
 
@@ -27,7 +27,7 @@ The UI currently uses:
 - `SettingsStoring`
 - `MessageSending`
 
-Real data/search/action workers should replace the mock providers by constructing an `AppDependencies` value with production implementations. The UI does not mutate Messages storage directly.
+`AppDependencies.live()` constructs production read-only data, local search, permission, settings, and safe action implementations. `AppDependencies.fixture(...)` and `.indexedFixture(...)` preserve deterministic preview/test providers. The UI does not mutate Messages storage directly.
 
 ## Performance Shape
 
