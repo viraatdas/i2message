@@ -24,7 +24,7 @@ Package.resolved
 notarytool-profile.json
 
 # Rudder local context
-RUDDER.md
-RUDDER_SHARED.md
 .rudder/
 .rudder-worktrees/
+RUDDER.md
+RUDDER_SHARED.md
