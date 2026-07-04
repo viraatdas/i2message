@@ -18,6 +18,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var conversationPhase: UIContentPhase = .loaded
     @Published private(set) var contactPhase: UIContentPhase = .loaded
     @Published private(set) var permissionSnapshot: PermissionSnapshot
+    @Published private(set) var actionAvailabilitySnapshot: MessagingActionAvailabilitySnapshot
     @Published private(set) var settings: AppSettings
     @Published private(set) var indexingProgress: IndexingProgress = .idle
 
@@ -43,6 +44,8 @@ final class AppViewModel: ObservableObject {
 
     let dependencies: AppDependencies
     private var searchPageCursor: PageCursor?
+    private var observationTask: Task<Void, Never>?
+    private var indexingTask: Task<Void, Never>?
     private var hasLoaded = false
 
     init(dependencies: AppDependencies = .mock()) {
@@ -52,8 +55,18 @@ final class AppViewModel: ObservableObject {
         self.selectedConversationID = dependencies.seed.conversations.first?.id
         self.selectedContactID = dependencies.seed.contacts.first { !$0.isCurrentUser }?.id
         self.permissionSnapshot = PermissionSnapshot(statuses: [])
+        self.actionAvailabilitySnapshot = .conservativeDefault(checkedAt: Date())
         self.settings = AppSettings(pageSize: 42)
         seedInitialTranscriptPage()
+    }
+
+    deinit {
+        observationTask?.cancel()
+        indexingTask?.cancel()
+    }
+
+    var isUsingLiveData: Bool {
+        dependencies.isLiveData
     }
 
     var selectedConversation: Conversation? {
@@ -171,7 +184,18 @@ final class AppViewModel: ObservableObject {
             return
         }
         hasLoaded = true
+        let clock = ContinuousClock()
+        let start = clock.now
+        AppDiagnostics.lifecycle("load_started")
         await refreshEverything()
+        AppDiagnostics.loadCompleted(
+            duration: start.duration(to: clock.now),
+            conversations: conversations.count,
+            contacts: contacts.count,
+            live: dependencies.isLiveData
+        )
+        startObservingDataChanges()
+        startBackgroundIndexingIfNeeded()
     }
 
     func refreshEverything() async {
@@ -179,7 +203,10 @@ final class AppViewModel: ObservableObject {
         await refreshPermissions()
         await loadConversations()
         await loadContacts()
-        if selectedConversationID == nil {
+        if let selectedConversationID, !conversations.contains(where: { $0.id == selectedConversationID }) {
+            self.selectedConversationID = conversations.first?.id
+            highlightedMessageID = nil
+        } else if selectedConversationID == nil {
             selectedConversationID = conversations.first?.id
         }
         await loadSelectedConversation(reset: true)
@@ -196,7 +223,8 @@ final class AppViewModel: ObservableObject {
             conversationPhase = conversations.isEmpty ? .empty : .loaded
         } catch {
             conversationPhase = .failed(error.localizedDescription)
-            showBanner(tone: .error, title: "Could not load conversations", message: error.localizedDescription)
+            AppDiagnostics.failure("load_conversations", category: String(describing: type(of: error)))
+            showBanner(tone: .error, title: "Could not load conversations", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
     }
 
@@ -208,7 +236,8 @@ final class AppViewModel: ObservableObject {
             contactPhase = contacts.isEmpty ? .empty : .loaded
         } catch {
             contactPhase = .failed(error.localizedDescription)
-            showBanner(tone: .error, title: "Could not load contacts", message: error.localizedDescription)
+            AppDiagnostics.failure("load_contacts", category: String(describing: type(of: error)))
+            showBanner(tone: .error, title: "Could not load contacts", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
     }
 
@@ -216,7 +245,9 @@ final class AppViewModel: ObservableObject {
         sidebarDestination = .conversations
         selectedConversationID = id
         self.highlightedMessageID = highlightedMessageID
-        if transcriptPages[id]?.messages.isEmpty ?? true {
+        if let highlightedMessageID {
+            await loadMessages(in: id, reset: true, around: highlightedMessageID)
+        } else if transcriptPages[id]?.messages.isEmpty ?? true {
             await loadSelectedConversation(reset: true)
         }
     }
@@ -272,6 +303,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadMessages(in conversationID: ConversationID, reset: Bool) async {
+        await loadMessages(in: conversationID, reset: reset, around: nil)
+    }
+
+    func loadMessages(in conversationID: ConversationID, reset: Bool, around anchor: MessageID?) async {
         var state = transcriptPages[conversationID] ?? .empty
         guard reset || (state.hasMoreOlder && !state.isLoadingOlder) else {
             return
@@ -288,18 +323,19 @@ final class AppViewModel: ObservableObject {
             let page = try await dependencies.messageRepository.messages(
                 in: conversationID,
                 page: PageRequest(
-                    cursor: reset ? nil : state.olderCursor,
+                    cursor: reset || anchor != nil ? nil : state.olderCursor,
                     limit: max(settings.pageSize, 20),
                     direction: .older
                 ),
-                around: nil
+                around: anchor
             )
+            let orderedItems = page.items.sorted { $0.sentAt < $1.sentAt }
             var nextState = transcriptPages[conversationID] ?? .empty
             if reset {
-                nextState.messages = page.items
+                nextState.messages = orderedItems
             } else {
                 let existingIDs = Set(nextState.messages.map(\.id))
-                nextState.messages = page.items.filter { !existingIDs.contains($0.id) } + nextState.messages
+                nextState.messages = orderedItems.filter { !existingIDs.contains($0.id) } + nextState.messages
             }
             nextState.olderCursor = page.nextCursor
             nextState.hasMoreOlder = page.hasMore
@@ -311,10 +347,11 @@ final class AppViewModel: ObservableObject {
         } catch {
             var failedState = transcriptPages[conversationID] ?? .empty
             failedState.isLoadingOlder = false
-            failedState.phase = .failed(error.localizedDescription)
-            failedState.errorMessage = error.localizedDescription
+            failedState.phase = .failed(userFacingMessage(for: error))
+            failedState.errorMessage = userFacingMessage(for: error)
             transcriptPages[conversationID] = failedState
-            showBanner(tone: .error, title: "Could not load transcript", message: error.localizedDescription)
+            AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
+            showBanner(tone: .error, title: "Could not load transcript", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
     }
 
@@ -379,21 +416,36 @@ final class AppViewModel: ObservableObject {
         do {
             sendOperation = try await dependencies.messageSender.validate(draft)
             let receipt = try await dependencies.messageSender.send(draft)
+            AppDiagnostics.operation("send_message", state: "accepted")
             appendSentMessage(receipt: receipt, draft: draft)
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
             sendOperation = nil
-            showBanner(tone: .success, title: "Message queued", message: "Mock send used the shared sending contract.")
+            try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
+            if dependencies.isLiveData {
+                scheduleTranscriptReload()
+            }
+            showBanner(
+                tone: .success,
+                title: dependencies.isLiveData ? "Message sent" : "Message queued",
+                message: dependencies.isLiveData
+                    ? "Messages.app accepted the send. The transcript will refresh from the read-only store."
+                    : "Fixture send used the shared sending contract."
+            )
         } catch {
+            AppDiagnostics.failure("send_message", category: String(describing: type(of: error)))
             sendOperation = SendOperation(
                 id: "send.failed.\(UUID().uuidString)",
                 draft: draft,
                 state: .failed,
                 createdAt: Date(),
                 updatedAt: Date(),
-                failureReason: error.localizedDescription
+                failureReason: userFacingMessage(for: error)
             )
-            showBanner(tone: .error, title: "Could not send", message: error.localizedDescription)
+            if dependencies.isLiveData, await handoffDraftForManualSend(draft: draft) {
+                return
+            }
+            showBanner(tone: .error, title: "Could not send", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
     }
 
@@ -446,8 +498,9 @@ final class AppViewModel: ObservableObject {
                 searchPhase = exactSearchResults.isEmpty && semanticSnippets.isEmpty ? .empty : .loaded
             }
         } catch {
-            searchPhase = .failed(error.localizedDescription)
-            showBanner(tone: .error, title: "Search failed", message: error.localizedDescription)
+            AppDiagnostics.failure("search", category: String(describing: type(of: error)))
+            searchPhase = .failed(userFacingMessage(for: error))
+            showBanner(tone: .error, title: "Search failed", message: userFacingMessage(for: error))
         }
     }
 
@@ -486,15 +539,17 @@ final class AppViewModel: ObservableObject {
 
     func refreshPermissions() async {
         permissionSnapshot = await dependencies.permissionManager.permissionSnapshot()
+        actionAvailabilitySnapshot = await dependencies.messagingActions?.availabilitySnapshot()
+            ?? .conservativeDefault(checkedAt: Date())
     }
 
     func requestPermission(_ permission: AppPermission) async {
         do {
             _ = try await dependencies.permissionManager.request(permission)
             await refreshPermissions()
-            showBanner(tone: .success, title: "Permission updated", message: "\(permission.displayName) is refreshed in mock mode.")
+            showBanner(tone: .success, title: "Permission updated", message: "\(permission.displayName) status refreshed.")
         } catch {
-            showBanner(tone: .error, title: "Permission request failed", message: error.localizedDescription)
+            showBanner(tone: .error, title: "Permission request failed", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
     }
 
@@ -526,19 +581,12 @@ final class AppViewModel: ObservableObject {
         )
 
         do {
-            for step in 0...8 {
-                indexingProgress.exactProgress = Double(step) / 8
-                indexingProgress.message = "Updating exact index"
-                try await Task.sleep(nanoseconds: 35_000_000)
-            }
+            indexingProgress.message = "Updating exact index"
             try await dependencies.searchIndexer.rebuildExactIndex { _ in }
-
-            for step in 0...10 {
-                indexingProgress.semanticProgress = Double(step) / 10
-                indexingProgress.message = "Refreshing semantic snippets locally"
-                try await Task.sleep(nanoseconds: 40_000_000)
-            }
+            indexingProgress.exactProgress = 1
+            indexingProgress.message = "Refreshing semantic snippets locally"
             try await dependencies.searchIndexer.rebuildSemanticIndex { _ in }
+            indexingProgress.semanticProgress = 1
 
             indexingProgress = IndexingProgress(
                 isIndexing: false,
@@ -547,10 +595,10 @@ final class AppViewModel: ObservableObject {
                 lastIndexedAt: Date(),
                 message: "Indexes are current"
             )
-            showBanner(tone: .success, title: "Indexes rebuilt", message: "Exact and semantic indexes finished in mock mode.")
+            showBanner(tone: .success, title: "Indexes rebuilt", message: "Exact and semantic indexes finished locally.")
         } catch {
             indexingProgress.isIndexing = false
-            showBanner(tone: .error, title: "Indexing failed", message: error.localizedDescription)
+            showBanner(tone: .error, title: "Indexing failed", message: userFacingMessage(for: error))
         }
     }
 
@@ -563,7 +611,7 @@ final class AppViewModel: ObservableObject {
                 message: "Showing cached conversations, queued composer state, and local search surfaces."
             )
         } else {
-            showBanner(tone: .success, title: "Back online", message: "Mock providers are reachable again.")
+            showBanner(tone: .success, title: "Back online", message: "Providers are reachable again.")
         }
     }
 
@@ -594,9 +642,13 @@ final class AppViewModel: ObservableObject {
     func perform(_ command: AppCommand) async {
         switch command {
         case .newMessage:
-            sidebarDestination = .conversations
-            focusRequest = .composer
-            showBanner(tone: .info, title: "New message", message: "Mock composer is ready for the selected conversation.")
+            if dependencies.isLiveData {
+                await openNewConversationHandoff()
+            } else {
+                sidebarDestination = .conversations
+                focusRequest = .composer
+                showBanner(tone: .info, title: "New message", message: "Fixture composer is ready for the selected conversation.")
+            }
         case .focusFilter:
             focusRequest = .sidebarSearch
         case .openSearch:
@@ -622,6 +674,51 @@ final class AppViewModel: ObservableObject {
         closeCommandPalette()
     }
 
+    func openSelectedConversationInMessages() async {
+        guard let conversation = selectedConversation else {
+            showBanner(tone: .warning, title: "No conversation selected", message: "Select a conversation before opening Messages.app.")
+            return
+        }
+
+        guard let actions = dependencies.messagingActions else {
+            showBanner(tone: .info, title: "Messages handoff", message: "The fixture app keeps this action local.")
+            return
+        }
+
+        do {
+            let result = try await actions.openConversation(
+                ConversationHandoffRequest(
+                    conversationID: conversation.id,
+                    displayTitle: conversation.title,
+                    handles: conversation.participants.flatMap(\.handles),
+                    draftText: currentDraftText
+                )
+            )
+            showBanner(tone: .success, title: "Opened Messages", message: result.userMessage)
+            await refreshPermissions()
+        } catch {
+            showBanner(tone: .error, title: "Could not open Messages", message: userFacingMessage(for: error))
+        }
+    }
+
+    func openNewConversationHandoff() async {
+        guard let actions = dependencies.messagingActions else {
+            sidebarDestination = .conversations
+            focusRequest = .composer
+            return
+        }
+
+        do {
+            let result = try await actions.openConversation(
+                ConversationHandoffRequest(displayTitle: "New Message")
+            )
+            showBanner(tone: .info, title: "New message handoff", message: result.userMessage)
+            await refreshPermissions()
+        } catch {
+            showBanner(tone: .error, title: "Could not start handoff", message: userFacingMessage(for: error))
+        }
+    }
+
     func consumeFocusRequest(_ request: FocusRequest) {
         if focusRequest == request {
             focusRequest = nil
@@ -635,14 +732,17 @@ final class AppViewModel: ObservableObject {
         if id == dependencies.seed.currentUser.id {
             return "You"
         }
-        return dependencies.seed.contacts.first { $0.id == id }?.displayName ?? "Unknown"
+        if let contact = contacts.first(where: { $0.id == id }) ?? dependencies.seed.contacts.first(where: { $0.id == id }) {
+            return contact.displayName
+        }
+        return id.rawValue == "current-user" ? "You" : "Unknown"
     }
 
     func contact(for id: ContactID?) -> Contact? {
         guard let id else {
             return nil
         }
-        return dependencies.seed.contacts.first { $0.id == id }
+        return contacts.first { $0.id == id } ?? dependencies.seed.contacts.first { $0.id == id }
     }
 
     func conversationTitle(for id: ConversationID) -> String {
@@ -672,6 +772,153 @@ final class AppViewModel: ObservableObject {
             totalCount: messages.count,
             errorMessage: nil
         )
+    }
+
+    private func startObservingDataChanges() {
+        observationTask?.cancel()
+        let repository = dependencies.conversationRepository
+        let indexer = dependencies.searchIndexer
+        observationTask = Task { [weak self] in
+            do {
+                for try await nextConversations in repository.observeConversations(filter: ConversationFilter(includeArchived: true)) {
+                    try Task.checkCancellation()
+                    let sorted = nextConversations.sorted(by: MockAppDataset.conversationSort)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        self.conversations = sorted
+                        if let selectedConversationID = self.selectedConversationID,
+                           !sorted.contains(where: { $0.id == selectedConversationID }) {
+                            self.selectedConversationID = sorted.first?.id
+                            self.highlightedMessageID = nil
+                        }
+                    }
+                    try? await indexer.invalidateIndex(for: nil)
+                    await MainActor.run { [weak self] in
+                        self?.startBackgroundIndexingIfNeeded()
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.showBanner(tone: .warning, title: "Live updates paused", message: self?.userFacingMessage(for: error) ?? "Conversation updates are unavailable.")
+                }
+            }
+        }
+    }
+
+    private func startBackgroundIndexingIfNeeded() {
+        guard settings.search.exactIndexEnabled || settings.search.semanticIndexEnabled else {
+            indexingProgress = IndexingProgress(
+                isIndexing: false,
+                exactProgress: 0,
+                semanticProgress: 0,
+                lastIndexedAt: indexingProgress.lastIndexedAt,
+                message: "Indexing disabled"
+            )
+            return
+        }
+        guard indexingTask == nil else {
+            return
+        }
+
+        let indexer = dependencies.searchIndexer
+        let exactEnabled = settings.search.exactIndexEnabled
+        let semanticEnabled = settings.search.semanticIndexEnabled
+        indexingTask = Task { [weak self] in
+            await MainActor.run { [weak self] in
+                self?.indexingProgress = IndexingProgress(
+                    isIndexing: true,
+                    exactProgress: exactEnabled ? 0 : 1,
+                    semanticProgress: semanticEnabled ? 0 : 1,
+                    lastIndexedAt: self?.indexingProgress.lastIndexedAt,
+                    message: "Indexing in background"
+                )
+            }
+
+            do {
+                if exactEnabled {
+                    try await indexer.rebuildExactIndex { _ in }
+                }
+
+                if semanticEnabled {
+                    await MainActor.run { [weak self] in
+                        self?.indexingProgress.exactProgress = 1
+                        self?.indexingProgress.message = "Indexing semantic search"
+                    }
+                    try await indexer.rebuildSemanticIndex { _ in }
+                }
+
+                await MainActor.run { [weak self] in
+                    self?.indexingProgress = IndexingProgress(
+                        isIndexing: false,
+                        exactProgress: exactEnabled ? 1 : 0,
+                        semanticProgress: semanticEnabled ? 1 : 0,
+                        lastIndexedAt: Date(),
+                        message: "Indexes are current"
+                    )
+                    self?.indexingTask = nil
+                }
+            } catch is CancellationError {
+                await MainActor.run { [weak self] in
+                    self?.indexingTask = nil
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.indexingProgress.isIndexing = false
+                    self?.indexingProgress.message = "Indexing paused"
+                    self?.indexingTask = nil
+                }
+            }
+        }
+    }
+
+    private func scheduleTranscriptReload() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await self?.loadSelectedConversation(reset: true)
+        }
+    }
+
+    private func handoffDraftForManualSend(draft: MessageDraft) async -> Bool {
+        guard let actions = dependencies.messagingActions,
+              case .existingConversation(let conversationID) = draft.target,
+              let conversation = conversations.first(where: { $0.id == conversationID })
+        else {
+            return false
+        }
+
+        do {
+            _ = try await actions.preparePasteHandoff(
+                PasteHandoffRequest(text: draft.text, attachments: draft.attachments)
+            )
+            _ = try await actions.openConversation(
+                ConversationHandoffRequest(
+                    conversationID: conversation.id,
+                    displayTitle: conversation.title,
+                    handles: conversation.participants.flatMap(\.handles),
+                    draftText: draft.text
+                )
+            )
+            showBanner(
+                tone: .warning,
+                title: "Manual send handoff",
+                message: "The draft was copied and Messages.app was opened for a user-approved send."
+            )
+            await refreshPermissions()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func userFacingMessage(for error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription,
+           !description.isEmpty {
+            return description
+        }
+        return error.localizedDescription
     }
 
     private func appendSentMessage(receipt: SendReceipt, draft: MessageDraft) {
@@ -726,20 +973,5 @@ final class AppViewModel: ObservableObject {
         actionTitle: String? = nil
     ) {
         statusBanner = StatusBanner(tone: tone, title: title, message: message, actionTitle: actionTitle)
-    }
-}
-
-extension AppPermission {
-    var displayName: String {
-        switch self {
-        case .fullDiskAccess:
-            return "Full Disk Access"
-        case .contacts:
-            return "Contacts"
-        case .appleEventsMessages:
-            return "Messages Automation"
-        case .notifications:
-            return "Notifications"
-        }
     }
 }

@@ -164,7 +164,7 @@ enum AppCommand: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .newMessage:
-            return "Start a draft using mock contacts"
+            return "Start or hand off a new Messages draft"
         case .focusFilter:
             return "Filter conversations and contacts"
         case .openSearch:
@@ -180,7 +180,7 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .toggleOffline:
             return "Preview unavailable data and local-cache UI"
         case .simulateError:
-            return "Preview recoverable error banner"
+            return "Preview a recoverable error banner"
         case .clearBanner:
             return "Clear the active status banner"
         }

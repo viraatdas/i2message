@@ -2,6 +2,7 @@ import Foundation
 import i2MessageCore
 
 struct AppDependencies: Sendable {
+    var isLiveData: Bool
     var seed: MockAppDataset
     var conversationRepository: any ConversationRepository
     var messageRepository: any MessageRepository
@@ -9,12 +10,18 @@ struct AppDependencies: Sendable {
     var searchProvider: any SearchProviding
     var searchIndexer: any SearchIndexing
     var permissionManager: any PermissionManaging
+    var messagingActions: (any MessagingActionServicing)?
     var settingsStore: any SettingsStoring
     var messageSender: any MessageSending
 
     static func mock(delayNanoseconds: UInt64 = 55_000_000) -> AppDependencies {
         let dataset = MockAppDataset.rich
+        return fixture(dataset: dataset, delayNanoseconds: delayNanoseconds)
+    }
+
+    static func fixture(dataset: MockAppDataset, delayNanoseconds: UInt64 = 55_000_000) -> AppDependencies {
         return AppDependencies(
+            isLiveData: false,
             seed: dataset,
             conversationRepository: MockConversationRepository(dataset: dataset, delayNanoseconds: delayNanoseconds),
             messageRepository: MockMessageRepository(dataset: dataset, delayNanoseconds: delayNanoseconds),
@@ -22,6 +29,40 @@ struct AppDependencies: Sendable {
             searchProvider: MockSearchProvider(dataset: dataset, delayNanoseconds: delayNanoseconds),
             searchIndexer: MockSearchIndexer(delayNanoseconds: delayNanoseconds),
             permissionManager: MockPermissionManager(),
+            messagingActions: nil,
+            settingsStore: MockSettingsStore(),
+            messageSender: MockMessageSender(delayNanoseconds: delayNanoseconds)
+        )
+    }
+
+    static func indexedFixture(
+        dataset: MockAppDataset,
+        indexURL: URL,
+        embedder: any SemanticEmbeddingProviding = HashingSemanticEmbedder(),
+        delayNanoseconds: UInt64 = 0
+    ) -> AppDependencies {
+        let corpus = SearchIndexCorpus(
+            conversations: dataset.conversations,
+            contacts: dataset.contacts,
+            messages: dataset.allMessages
+        )
+        let searchService = LocalSearchService(
+            indexURL: indexURL,
+            corpusProvider: StaticSearchIndexCorpusProvider(corpus: corpus),
+            embedder: embedder,
+            indexingBatchSize: 500,
+            semanticCandidateLimit: 50_000
+        )
+        return AppDependencies(
+            isLiveData: false,
+            seed: dataset,
+            conversationRepository: MockConversationRepository(dataset: dataset, delayNanoseconds: delayNanoseconds),
+            messageRepository: MockMessageRepository(dataset: dataset, delayNanoseconds: delayNanoseconds),
+            contactProvider: MockContactProvider(dataset: dataset, delayNanoseconds: delayNanoseconds),
+            searchProvider: searchService,
+            searchIndexer: searchService,
+            permissionManager: MockPermissionManager(),
+            messagingActions: nil,
             settingsStore: MockSettingsStore(),
             messageSender: MockMessageSender(delayNanoseconds: delayNanoseconds)
         )

@@ -87,40 +87,26 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift; Sources/i2MessageCore/DataAccess/MessagesDataAccessStack.swift; docs/data-access.md
 - **By:** n1 · 2026-07-04T02:12:47.604Z
 
-## n4: Resolved UI merge conflicts by keeping the AppViewModel shell
-- **Did:** Resolved conflicts in the root ignore file, shared decisions, and the app UI files by retaining the n4 native SwiftUI `AppViewModel` shell, deleting the obsolete `MockInboxViewModel`, and preserving the shared n1/n2/n3 decision history.
-- **Why:** The n4 shell replaces the earlier mock inbox with protocol-backed dependencies; production data/search/parity providers should wire through `AppDependencies` in the integration lane rather than reviving the old view model.
-- **Interfaces:** `.gitignore`; `DECISIONS.md`; `Sources/i2MessageApp/Views/ContentView.swift`; `Sources/i2MessageApp/Views/ConversationDetailView.swift`; `Sources/i2MessageApp/Views/SidebarView.swift`; removed `Sources/i2MessageApp/Mock/MockInboxViewModel.swift`.
-- **By:** n4 · 2026-07-04T02:20:00Z
-## n4: Resolved all jj merge conflicts for n4 by preserving
-- **Did:** Resolved all jj merge conflicts for n4 by preserving the native SwiftUI AppViewModel shell, combined ignore/decision history, and deleting the obsolete MockInboxViewModel. jj reports no conflicts. Verified with ./scripts/test.sh and ./scripts/build.sh; both succeeded with only the known local CoreSimulator warning.
-- **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppDependencies remains the UI integration boundary for production data/search/parity providers.
+## n5: Wired end-to-end live app composition with fixture fallback and performance smoke
+- **Did:** Integrated the n1 read-only Messages/Contacts stack, n2 `LocalSearchService`, n3 safe Messages parity actions, and n4 SwiftUI shell through `AppDependencies.live()`. The app now launches from fixture seed data, hydrates real bounded pages when permissions allow, starts exact/semantic indexing in the background, observes repository changes to invalidate/rebuild search, routes search results into transcript anchor pages, uses safe Messages.app send/handoff, persists settings locally, and logs diagnostics without message contents. Added app integration/performance tests and docs/performance.md with measured synthetic results.
+- **Interfaces:** `AppDependencies.live(configuration:fileManager:)`; `AppDependencies.fixture(...)`; `AppDependencies.indexedFixture(...)`; `CompositeAppPermissionManager`; `RepositorySearchIndexCorpusProvider`; `UserDefaultsSettingsStore`; `AppDiagnostics`; `AppViewModel.actionAvailabilitySnapshot`; `AppViewModel.openSelectedConversationInMessages()`; `Tests/i2MessageAppTests/Integration/AppIntegrationPerformanceTests.swift`; `docs/performance.md`.
+- **Measured:** 120-conversation/12,000-message synthetic fixture: launch 1 ms, transcript older-page load 0.2 ms, exact search first page 2.6 ms, semantic first results 354 ms, transcript route 0.1 ms.
 - **Follow-ups:**
-  - Wire production providers into AppDependencies [out of lane] — The resolved UI intentionally keeps the n4 mock/foundation shell; n1/n2/n3 real providers should be connected in the integration lane without reviving MockInboxViewModel.
-- **By:** n4 · 2026-07-04T02:17:26.126Z
-
-## n2: Confirmed DECISIONS.md merge resolution is clean: the shared log
-- **Did:** Confirmed DECISIONS.md merge resolution is clean: the shared log preserves n0/n1/n2/n3 records and consolidated n4 resolution notes; jj reports no unresolved conflicts; ./scripts/test.sh passed. No additional file edits were needed in this resolver turn.
-- **Interfaces:** DECISIONS.md shared decision log only; no code interfaces changed in this resolver turn
-- **By:** n2 · 2026-07-04T19:00:50.387Z
-
-## n3: Verified the merge resolution for n3: jj reports no
-- **Did:** Verified the merge resolution for n3: jj reports no unresolved conflicts, .gitignore preserves the combined Xcode/SPM/signing/Rudder ignore set, DECISIONS.md preserves the shared n0/n1/n2/n3/n4 decision history, and ./scripts/test.sh passed with only the known local CoreSimulator warning.
-- **Interfaces:** .gitignore; DECISIONS.md shared decision log; no code interfaces changed by this resolver
-- **By:** n3 · 2026-07-04T19:00:57.481Z
-
-## n1: Verified the jj merge conflict resolution for n1/n4: no
-- **Did:** Verified the jj merge conflict resolution for n1/n4: no unresolved conflicts or conflict markers remain; preserved combined .gitignore and DECISIONS.md history, kept the n4 AppViewModel SwiftUI shell, deleted the obsolete MockInboxViewModel, and verified ./scripts/test.sh plus ./scripts/build.sh pass with only the known CoreSimulator warning.
-- **Interfaces:** Conflicted paths resolved: .gitignore, DECISIONS.md, Sources/i2MessageApp/Views/ContentView.swift, Sources/i2MessageApp/Views/ConversationDetailView.swift, Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppDependencies remains the production provider handoff boundary.
+  - Run real-account Messages send/Automation/Full Disk Access QA [out of lane] — TCC prompts and Messages account state cannot be fully automated in CI.
+  - Tune semantic indexing for very large histories [out of lane] — Current bounded vector scan meets the 12,000-message target; ANN indexing may be needed for much larger accounts.
+- **By:** n5 · 2026-07-04T12:14:00-07:00
+## n5: Resolved all n5 jj merge conflicts by keeping the
+- **Did:** Resolved all n5 jj merge conflicts by keeping the live AppViewModel/AppDependencies integration, preserving combined ignore rules and the clean n5 decision log, deleting obsolete MockInboxViewModel, and retaining the polished SwiftUI conversation/sidebar/content views with live search, permissions, parity, and handoff UI. Verified with ./scripts/verify.sh: project generation, Debug macOS build, and full tests passed; jj resolve --list reports no conflicts.
+- **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppViewModel/AppDependencies live integration remains the app boundary.
 - **Follow-ups:**
-  - Wire real providers through AppDependencies [out of lane] — Data/search/parity providers are available from sibling lanes, but final app integration belongs to the integration lane rather than this conflict resolver.
-- **By:** n1 · 2026-07-04T19:01:13.785Z
+  - Real-account macOS QA [out of lane] — Full Disk Access, Contacts, Apple Events prompts, Messages account state, and real send/handoff flows still require a signed local app on a user account with Messages history.
+- **By:** n5 · 2026-07-04T19:22:50.727Z
 
-## n5: Integrated live read-only Messages/Contacts, local exact/semantic search, safe …
-- **Did:** Integrated live read-only Messages/Contacts, local exact/semantic search, safe parity actions, permissions, background indexing, search-result transcript routing, fixture fallback, diagnostics, integration/performance tests, and performance/manual-smoke docs. Resolved inherited merge conflicts and verified with ./scripts/verify.sh.
-- **Interfaces:** AppDependencies.live(configuration:fileManager:); AppDependencies.fixture(...); AppDependencies.indexedFixture(...); AppDiagnostics; CompositeAppPermissionManager; RepositorySearchIndexCorpusProvider; UserDefaultsSettingsStore; AppViewModel.actionAvailabilitySnapshot/openSelectedConversationInMessages/loadMessages(... around:); docs/performance.md; Tests/i2MessageAppTests/Integration/AppIntegrationPerformanceTests.swift
+## n6: Added a repeatable macOS release pipeline: resolved inherited AppViewModel
+- **Did:** Added a repeatable macOS release pipeline: resolved inherited AppViewModel merge conflicts, added tag-triggered GitHub Actions release workflow, Developer ID signing/keychain import scripts, app and DMG notarization/stapling/Gatekeeper validation, checksum generation, unsigned local dry-run packaging, and release docs. Verified script syntax, workflow YAML parsing, dry-run env validation, fail-fast missing-secret validation, unsigned Release DMG creation/mount validation/checksum, and ./scripts/test.sh.
+- **Interfaces:** .github/workflows/release.yml; scripts/release/common.sh; validate-env.sh; import-developer-id-certificate.sh; build-archive.sh; local-dry-run.sh; ci-release.sh; package-dmg.sh; validate-app.sh; validate-dmg.sh; notarize.sh; staple-and-assess.sh; checksums.sh; zip-app.sh; docs/release.md; docs/release-signing.md; README release references; secrets APPLE_TEAM_ID, DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64, DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD, APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_API_KEY_P8, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD
 - **Follow-ups:**
-  - Real-account macOS QA [out of lane] — Full Disk Access, Automation prompts, Messages account state, and real send/handoff behavior require a signed app and local user account with Messages history; CI cannot fully exercise TCC.
-  - Very-large-history semantic indexing tuning [out of lane] — The current local vector scan meets the 12k synthetic target; much larger histories may need ANN indexing or stricter corpus chunking.
-- **By:** n5 · 2026-07-04T19:17:58.120Z
+  - Configure real Apple Developer and notarization secrets [out of lane] — Production signing/notarization cannot run until the repository has real Developer ID and App Store Connect or Apple ID fallback credentials.
+  - Cut a v* release tag and review the first signed release artifact [out of lane] — The implemented workflow is ready, but the first signed/notarized GitHub Release needs real secret-backed CI execution and manual artifact sanity review.
+- **By:** n6 · 2026-07-04T19:37:22.884Z
 

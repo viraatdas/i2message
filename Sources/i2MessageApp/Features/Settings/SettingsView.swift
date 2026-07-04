@@ -32,7 +32,7 @@ struct SettingsView: View {
                     permissionsSection
                     searchSection
                     privacySection
-                    mockStateSection
+                    diagnosticsSection
                 }
                 .padding(20)
                 .frame(maxWidth: 760, alignment: .leading)
@@ -41,7 +41,7 @@ struct SettingsView: View {
             I2Divider()
 
             HStack {
-                Text("Mock settings use the shared SettingsStoring contract.")
+                Text("Settings are stored locally on this Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -159,9 +159,9 @@ struct SettingsView: View {
         }
     }
 
-    private var mockStateSection: some View {
+    private var diagnosticsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            I2SectionLabel(title: "Mock States")
+            I2SectionLabel(title: "Diagnostics")
                 .padding(.horizontal, -14)
 
             HStack(spacing: 8) {
