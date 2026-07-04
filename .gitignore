@@ -1,3 +1,29 @@
+.DS_Store
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+*.xcresult
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager / Xcode package resolution
+.build/
+Package.resolved
+
+# Signing and release secrets
+*.p8
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.developerprofile
+notarytool-profile.json
+
+# Rudder local context
 .rudder/
 .rudder-worktrees/
 RUDDER.md
