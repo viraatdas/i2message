@@ -7,15 +7,26 @@ struct ContactsWorkspaceView: View {
     var body: some View {
         Group {
             if let contact = model.selectedContact {
-                HStack(spacing: 0) {
-                    ContactDetailView(contact: contact)
-                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 0) {
+                        ContactDetailView(contact: contact)
+                            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
 
-                    I2Divider()
-                        .frame(width: 1)
+                        I2VerticalDivider()
 
-                    ContactConversationPane(contact: contact)
-                        .frame(width: 330)
+                        ContactConversationPane(contact: contact)
+                            .frame(width: 300)
+                    }
+
+                    VStack(spacing: 0) {
+                        ContactDetailView(contact: contact)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        I2Divider()
+
+                        ContactConversationPane(contact: contact)
+                            .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 320)
+                    }
                 }
             } else {
                 EmptyStateView(

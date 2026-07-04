@@ -12,7 +12,7 @@ struct SearchWorkspaceView: View {
             searchBody
         }
         .background(I2Palette.appBackground)
-        .onChange(of: model.focusRequest) { request in
+        .onChange(of: model.focusRequest) { _, request in
             guard request == .searchField else { return }
             searchFocused = true
             model.consumeFocusRequest(.searchField)
@@ -40,7 +40,7 @@ struct SearchWorkspaceView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 270)
-                .onChange(of: model.searchMode) { mode in
+                .onChange(of: model.searchMode) { _, mode in
                     Task { await model.setSearchMode(mode) }
                 }
             }

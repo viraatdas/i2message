@@ -8,7 +8,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **By:** conductor · 1783128244908
 
 ## n0: Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding
-- **Did:** Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding, README/docs, mock native app shell, shared i2MessageCore domain contracts, unit tests, scripts, CI placeholder, and verified generate/build/test/open flows.
+- **Did:** Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding, README/docs, mock native app shell, shared i2MessageCore domain contracts, unit tests, scripts, and CI placeholder, and verified generate/build/test/open flows.
 - **Interfaces:** project.yml targets i2Message/i2MessageCore/i2MessageCoreTests; App/Info.plist, App/i2Message.entitlements, App/i2Message.xcconfig; Sources/i2MessageCore models Contact/Conversation/Message/MessageAttachment/SearchResult/SemanticSnippet/Page/Permission/AppSettings/SendOperation/I2MessageError plus repository/search/permission/settings/sending/read-only database protocols; Sources/i2MessageApp SwiftUI mock shell and MockInboxViewModel; scripts/generate-xcodeproj.sh build.sh test.sh run-mock-app.sh verify.sh release hooks
 - **Follow-ups:**
   - Implement real read-only Messages data adapter [out of lane] — Foundation exposes MessagesDatabaseReading and repository contracts, but real chat.db access and permission onboarding are outside this worker lane.
@@ -75,6 +75,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Why:** Swift modules cannot contain two public `MacOSPermissionManager` declarations or two same-named Swift source files; the data layer still performs read-only Full Disk Access diagnostics against the configured database URL.
 - **Interfaces:** `Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift`; `MessagesDataAccessStack.permissions` default implementation.
 - **By:** n1 · 2026-07-04T02:15:00Z
+
 ## n4: Delivered polished SwiftUI macOS app shell against mock/foundation protocols:
 - **Did:** Delivered polished SwiftUI macOS app shell against mock/foundation protocols: native split-view sidebar modes for conversations/contacts/search, lazy paginated transcript with bubbles/tapbacks/attachments, composer with mock attachment/drop/send flow, exact/semantic/hybrid search workspace with paged results and snippets, settings/permissions/indexing/privacy surfaces, command palette, loading/error/empty/offline states, previews, docs, and UI-model tests. Resolved inherited .gitignore conflict. Verified XcodeGen, debug build, and ./scripts/test.sh; visual QA note: UI follows DESIGN.md with native macOS hierarchy, restrained accent usage, compact readable controls, no marketing/glass/gradient patterns, and stable small-window split layout.
 - **Interfaces:** AppDependencies in Sources/i2MessageApp/Features/App wraps ConversationRepository, MessageRepository, ContactProviding, SearchProviding, SearchIndexing, PermissionManaging, SettingsStoring, and MessageSending; production providers can replace mock services without view rewrites. Added i2MessageAppTests target in project.yml and docs/ui.md UI contract.
@@ -82,6 +83,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Wire production providers into AppDependencies after n1/n2/n3 merge [out of lane] — This lane intentionally stayed on mock/foundation protocols while data/search/action workers own real implementations.
   - Add real lazy image thumbnails at AttachmentChip boundary [out of lane] — Current UI renders lightweight attachment chips and transfer states; production thumbnails should remain lazy-loaded once attachment preview providers exist.
 - **By:** n4 · 2026-07-04T02:11:14.277Z
+
 ## n1: Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserved
 - **Did:** Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserved combined ignore rules and shared decision history, fixed merged Swift build issue by keeping n3 app-wide MacOSPermissionManager and renaming n1 data-layer checker to MessagesDataAccessPermissionManager, updated stack/docs/decisions, and verified ./scripts/test.sh succeeds.
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift; Sources/i2MessageCore/DataAccess/MessagesDataAccessStack.swift; docs/data-access.md
@@ -95,6 +97,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Run real-account Messages send/Automation/Full Disk Access QA [out of lane] — TCC prompts and Messages account state cannot be fully automated in CI.
   - Tune semantic indexing for very large histories [out of lane] — Current bounded vector scan meets the 12,000-message target; ANN indexing may be needed for much larger accounts.
 - **By:** n5 · 2026-07-04T12:14:00-07:00
+
 ## n5: Resolved all n5 jj merge conflicts by keeping the
 - **Did:** Resolved all n5 jj merge conflicts by keeping the live AppViewModel/AppDependencies integration, preserving combined ignore rules and the clean n5 decision log, deleting obsolete MockInboxViewModel, and retaining the polished SwiftUI conversation/sidebar/content views with live search, permissions, parity, and handoff UI. Verified with ./scripts/verify.sh: project generation, Debug macOS build, and full tests passed; jj resolve --list reports no conflicts.
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppViewModel/AppDependencies live integration remains the app boundary.
@@ -110,23 +113,29 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Cut a v* release tag and review the first signed release artifact [out of lane] — The implemented workflow is ready, but the first signed/notarized GitHub Release needs real secret-backed CI execution and manual artifact sanity review.
 - **By:** n6 · 2026-07-04T19:37:22.884Z
 
-## n6: Resolved n5/n6 release merge conflicts
-- **Did:** Resolved the current jj conflicts by keeping the n5 live `AppViewModel` SwiftUI shell, keeping `MockInboxViewModel` deleted, combining release-sensitive ignore rules for signing credentials/keychains, and preserving the n6 release pipeline decision record.
-- **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift.
-- **By:** n6 · 2026-07-04T12:39:52-07:00
-## n6: Resolved all jj merge conflicts for n6 against n5:
-- **Did:** Resolved all jj merge conflicts for n6 against n5: kept the live AppViewModel SwiftUI shell, deleted obsolete MockInboxViewModel, combined release-secret .gitignore entries, preserved n6 release decision notes, and verified with ./scripts/verify.sh plus ./scripts/release/local-dry-run.sh.
-- **Interfaces:** Resolved .gitignore, DECISIONS.md, Sources/i2MessageApp/Views/ContentView.swift, Sources/i2MessageApp/Views/ConversationDetailView.swift, Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift. Release pipeline files under .github/workflows/release.yml, scripts/release/**, docs/release*.md remain intact. Unsigned dry-run artifact: build/Release/i2Message-0.1.0-unsigned.dmg with build/Release/SHA256SUMS.txt.
+## n7: Completed final QA polish and release readiness pass
+- **Did:** Resolved inherited n7 conflicts while preserving the n5 live AppViewModel/AppDependencies integration and n6 release pipeline, fixed the sidebar permission footer request action, updated deprecated SwiftUI `onChange` handlers, added a shared `I2VerticalDivider`, made the Contacts detail layout responsive for small windows, verified script/plist syntax, `./scripts/verify.sh`, synthetic performance, unsigned release DMG dry-run, credential validation behavior, and privacy scans, and added `docs/ship-checklist.md`.
+- **Interfaces:** `.gitignore`; `DECISIONS.md`; `docs/ship-checklist.md`; `Sources/i2MessageApp/DesignSystem/I2DesignSystem.swift` `I2VerticalDivider`; `Sources/i2MessageApp/Features/Contacts/ContactsWorkspaceView.swift`; `Sources/i2MessageApp/Views/SidebarView.swift`; `Sources/i2MessageApp/Views/ContentView.swift`; `Sources/i2MessageApp/Views/ConversationDetailView.swift`; removed obsolete `Sources/i2MessageApp/Mock/MockInboxViewModel.swift`.
+- **Measured:** 120-conversation/12,000-message synthetic fixture: launch 0.1463s, transcript older-page load 0.0002s, exact search first page 0.0035s, semantic first results 0.3525s, transcript route 0.0001s. Unsigned DMG: `build/Release/i2Message-0.1.0-unsigned.dmg`, SHA-256 `c513ac83aeabd6d325799695a30104fa4736dbb8878898821b0e9b2f0d1adf8e`.
 - **Follow-ups:**
-  - Configure real Apple release secrets [out of lane] — Developer ID signing and notarization cannot run until real Apple Developer/App Store Connect or Apple ID fallback credentials are added to GitHub Secrets.
-  - Cut first signed release tag [out of lane] — The release workflow still needs a real tag-triggered CI run with secrets and manual artifact sanity review.
-- **By:** n6 · 2026-07-04T19:42:37.224Z
+  - Run real-account macOS TCC and Messages send QA [out of lane] — Full Disk Access, Contacts, Automation, Notifications, and real Messages account behavior require the signed app on the user's account.
+  - Configure Apple Developer signing/notarization secrets [out of lane] — Developer ID signing, notarization, stapling, Gatekeeper assessment of signed artifacts, and GitHub Release publication require real repository secrets.
+- **By:** n7 · 2026-07-04T20:00:00Z
+## n7: Resolved all n7 jj merge conflicts by preserving the
+- **Did:** Resolved all n7 jj merge conflicts by preserving the final-QA/live AppViewModel side, keeping the n6 release pipeline, deleting obsolete MockInboxViewModel, updating docs/ship-checklist.md with fresh verification metrics, and rerunning readiness checks. Verification passed: script syntax, plist lint, workflow YAML parse, privacy/secret scans, ./scripts/verify.sh, isolated synthetic performance benchmark, unsigned release dry run, checksum validation. Credentialed release validation fails only for missing Apple Developer/notarization secrets as expected.
+- **Interfaces:** .gitignore; DECISIONS.md; docs/ship-checklist.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; unsigned artifact build/Release/i2Message-0.1.0-unsigned.dmg SHA-256 1ccc474b645e0e8cc76ad5c2bb1d085800c63d10a79822c91654fcb9f3e50d11
+- **Follow-ups:**
+  - Run real-account macOS QA [out of lane] — Full Disk Access, Contacts, Automation, Notifications, and real Messages send/handoff behavior require the signed app on the user account with real local history.
+  - Configure Apple release secrets [out of lane] — Developer ID signing, notarization, stapling, Gatekeeper assessment of signed artifacts, and GitHub Release publication require real repository secrets.
+  - Update local Xcode/CoreSimulator install [out of lane] — Xcode reports CoreSimulator 1051.54.0 older than build version 1051.55.0; it did not block macOS build/test/release dry-run paths but should be cleaned up on the machine.
+- **By:** n7 · 2026-07-04T20:04:58.287Z
 
-## n7: Resolved inherited n7 merge conflicts, completed final QA polish,
-- **Did:** Resolved inherited n7 merge conflicts, completed final QA polish, verified build/test/benchmark/unsigned release dry run, added ship checklist, and documented credential-only signing/notarization skips.
-- **Interfaces:** docs/ship-checklist.md; DECISIONS.md n7 note; AppViewModel/AppDependencies boundary preserved; I2VerticalDivider; responsive ContactsWorkspaceView; Sidebar permission mini-footer request action
+## n8: n8 terminal push/privacy gate ran from main checkout /Users/viraat/code/i2messa…
+- **Did:** n8 terminal push/privacy gate ran from main checkout /Users/viraat/code/i2message after RUDDER showed n1-n7 merged and only coordinator+self active. Inspected required docs/scripts/workflows/remotes/tags. ./scripts/verify.sh passed. ./scripts/release/local-dry-run.sh passed and produced build/Release/i2Message-0.1.0-unsigned.dmg SHA-256 28207263f8c398f064cffaabdca58f47367aa243d625b16ea51174b036450ebf. Signed archive path was skipped precisely because ./scripts/release/validate-env.sh --release returned 64 for missing APPLE_TEAM_ID, Developer ID cert/password/keychain password, and notarization credentials. Privacy audit passed for tracked paths, tracked binary/media, secret/token patterns, JJ diff content, tags (none), and DMG contents; only reviewed generic chat.db docs/diagnostic references and synthetic example.com/555 fixtures. No push performed because status/push gate failed: git status --short --branch reports detached HEAD with unmerged index entries including .jj-do-not-resolve-this-conflict plus UU/UD app files; jj has final n7 merge content in @ with diff, main bookmark still points at initial commit 04d6cfd, git HEAD is n6 e8a25eb, and no local tags exist. Remote origin is https://github.com/viraatdas/i2message.git; remote main is still 04d6cfd. GitHub release workflow could not start because no branch/tag was pushed.
+- **Interfaces:** No code interfaces created or changed by n8. Assumed final app/release interfaces from merged n1-n7; generated ignored build artifacts under build/Release only.
 - **Follow-ups:**
-  - Run real-account macOS TCC and Messages send QA [out of lane] — Full Disk Access, Contacts, Apple Events, Notifications, and real Messages account behavior require a signed app on the user account with real local history.
-  - Configure Apple Developer signing and notarization secrets [out of lane] — Production Developer ID signing, notarization, stapling, Gatekeeper assessment, and GitHub Release upload require real Apple and GitHub repository secrets.
-- **By:** n7 · 2026-07-04T20:00:17.273Z
+  - Export/repair jj-to-git main checkout state before pushing [out of lane] — The gate cannot safely push while Git is detached with unmerged index entries and the main bookmark still targets the initial commit instead of the final n7 merge.
+  - Cut and push release tag after branch state is clean [out of lane] — No local tags exist; v0.1.0 is only inferred from MARKETING_VERSION, and the GitHub Releases workflow starts on pushed v* tags.
+  - Configure Apple Developer signing and notarization secrets [out of lane] — Production signed archive/notarization is blocked solely by missing Apple Developer certificate/keychain and notarization credentials.
+- **By:** n8 · 2026-07-04T20:10:48.764Z
 

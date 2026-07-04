@@ -93,7 +93,7 @@ struct CommandPaletteView: View {
         .onAppear {
             paletteFocused = true
         }
-        .onChange(of: model.focusRequest) { request in
+        .onChange(of: model.focusRequest) { _, request in
             guard request == .commandPalette else { return }
             paletteFocused = true
             model.consumeFocusRequest(.commandPalette)
