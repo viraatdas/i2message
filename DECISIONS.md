@@ -16,3 +16,13 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Add production app icon and signed archive export options [out of lane] — Signing and notarization templates are present, but final brand icon assets and team-specific export settings require owner choices/secrets.
 - **By:** n0 · 2026-07-04T01:37:20.602Z
 
+## n1: Resolved inherited `.gitignore` conflict
+- **Did:** The n1 workspace contained an unresolved `.gitignore` conflict between Rudder-local ignores and n0's generated Xcode/SPM/signing ignores; resolved it by preserving both sets of rules before implementing data access.
+- **Why:** Build/test and `jj` inspection would remain unreliable with conflict markers in a root project file.
+- **By:** n1 · 2026-07-04T01:44:00Z
+
+## n1: Implemented read-only Messages and Contacts data layer
+- **Did:** Added read-only SQLite-backed Messages repositories, Contacts.framework resolution/cache, Full Disk Access/Contacts permission diagnostics, polling change detection, stable cursor pagination, attachment/tapback/reply mapping, synthetic fixtures, performance smoke tests, and `docs/data-access.md`.
+- **Interfaces:** `MessagesDataAccessStack`, `MessagesStoreConfiguration`, `ReadOnlyMessagesStore`, `MessagesStoreDiagnosticService`, `MessagesChangeMonitoring`/`PollingMessagesChangeMonitor`, `SQLiteConversationRepository`, `SQLiteMessageRepository`, `SQLiteAttachmentRepository`, `SystemContactsProvider`, `ContactResolving`, `ContactHandleNormalizer`, `MacOSPermissionManager`.
+- **Safety:** SQLite opens use `SQLITE_OPEN_READONLY` plus `PRAGMA query_only = ON`; tests generate temporary synthetic chat.db schemas and do not read or copy real user Messages data.
+- **By:** n1 · 2026-07-04T02:08:00Z
