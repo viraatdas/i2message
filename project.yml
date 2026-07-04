@@ -1,0 +1,122 @@
+name: i2Message
+
+options:
+  bundleIdPrefix: dev.viraat
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+  groupSortPosition: top
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift.git
+    from: "7.5.0"
+  Collections:
+    url: https://github.com/apple/swift-collections.git
+    from: "1.6.0"
+  AsyncAlgorithms:
+    url: https://github.com/apple/swift-async-algorithms.git
+    from: "1.1.1"
+  Logging:
+    url: https://github.com/apple/swift-log.git
+    from: "1.14.0"
+
+settings:
+  base:
+    CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "6.0"
+
+targets:
+  i2MessageCore:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/i2MessageCore
+    dependencies:
+      - package: GRDB
+        product: GRDB
+      - package: Collections
+        product: Collections
+      - package: AsyncAlgorithms
+        product: AsyncAlgorithms
+      - package: Logging
+        product: Logging
+    settings:
+      base:
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.core
+        SKIP_INSTALL: YES
+
+  i2Message:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/i2MessageApp
+      - path: Resources
+        buildPhase: resources
+    dependencies:
+      - target: i2MessageCore
+    configFiles:
+      Debug: App/i2Message.xcconfig
+      Release: App/i2Message.xcconfig
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_ENTITLEMENTS: App/i2Message.entitlements
+        INFOPLIST_FILE: App/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message
+        PRODUCT_NAME: i2Message
+
+  i2MessageCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/i2MessageCoreTests
+    dependencies:
+      - target: i2MessageCore
+    settings:
+      base:
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.core-tests
+
+  i2MessageAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/i2MessageAppTests
+    dependencies:
+      - target: i2Message
+    hostApplication: i2Message
+    settings:
+      base:
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.app-tests
+
+schemes:
+  i2Message:
+    build:
+      targets:
+        i2Message: all
+        i2MessageCoreTests: [test]
+        i2MessageAppTests: [test]
+    test:
+      gatherCoverageData: true
+      targets:
+        - name: i2MessageCoreTests
+          parallelizable: true
+          randomExecutionOrder: true
+        - name: i2MessageAppTests
+          parallelizable: true
+          randomExecutionOrder: true
+    run:
+      config: Debug
+    archive:
+      config: Release

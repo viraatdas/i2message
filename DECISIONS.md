@@ -16,3 +16,8 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Add production app icon and signed archive export options [out of lane] — Signing and notarization templates are present, but final brand icon assets and team-specific export settings require owner choices/secrets.
 - **By:** n0 · 2026-07-04T01:37:20.602Z
 
+## n4: Native SwiftUI client shell consumes foundation protocols through AppDependencies
+- **Did:** Replaced the small mock inbox with a full native SwiftUI app shell: conversation/contact/search sidebar modes, lazy paginated transcript, composer, exact/semantic/hybrid search, settings, command palette, loading/error/empty/offline/indexing states, previews, docs, and UI-model tests.
+- **Interfaces:** `Sources/i2MessageApp/Features/App/AppDependencies` wraps `ConversationRepository`, `MessageRepository`, `ContactProviding`, `SearchProviding`, `SearchIndexing`, `PermissionManaging`, `SettingsStoring`, and `MessageSending`; production lanes should replace mock providers by constructing that dependency set, not by changing view code.
+- **Adjustment:** UI lane uses mock rich data only and does not implement real Messages/search/sending backends because n1/n2/n3 own those providers. `project.yml` adds `i2MessageAppTests` so UI-model behavior can run in Xcode.
+- **By:** n4 · 2026-07-04T02:10:25Z
