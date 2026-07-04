@@ -110,3 +110,23 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Cut a v* release tag and review the first signed release artifact [out of lane] — The implemented workflow is ready, but the first signed/notarized GitHub Release needs real secret-backed CI execution and manual artifact sanity review.
 - **By:** n6 · 2026-07-04T19:37:22.884Z
 
+## n6: Resolved n5/n6 release merge conflicts
+- **Did:** Resolved the current jj conflicts by keeping the n5 live `AppViewModel` SwiftUI shell, keeping `MockInboxViewModel` deleted, combining release-sensitive ignore rules for signing credentials/keychains, and preserving the n6 release pipeline decision record.
+- **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift.
+- **By:** n6 · 2026-07-04T12:39:52-07:00
+## n6: Resolved all jj merge conflicts for n6 against n5:
+- **Did:** Resolved all jj merge conflicts for n6 against n5: kept the live AppViewModel SwiftUI shell, deleted obsolete MockInboxViewModel, combined release-secret .gitignore entries, preserved n6 release decision notes, and verified with ./scripts/verify.sh plus ./scripts/release/local-dry-run.sh.
+- **Interfaces:** Resolved .gitignore, DECISIONS.md, Sources/i2MessageApp/Views/ContentView.swift, Sources/i2MessageApp/Views/ConversationDetailView.swift, Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift. Release pipeline files under .github/workflows/release.yml, scripts/release/**, docs/release*.md remain intact. Unsigned dry-run artifact: build/Release/i2Message-0.1.0-unsigned.dmg with build/Release/SHA256SUMS.txt.
+- **Follow-ups:**
+  - Configure real Apple release secrets [out of lane] — Developer ID signing and notarization cannot run until real Apple Developer/App Store Connect or Apple ID fallback credentials are added to GitHub Secrets.
+  - Cut first signed release tag [out of lane] — The release workflow still needs a real tag-triggered CI run with secrets and manual artifact sanity review.
+- **By:** n6 · 2026-07-04T19:42:37.224Z
+
+## n7: Resolved inherited n7 merge conflicts, completed final QA polish,
+- **Did:** Resolved inherited n7 merge conflicts, completed final QA polish, verified build/test/benchmark/unsigned release dry run, added ship checklist, and documented credential-only signing/notarization skips.
+- **Interfaces:** docs/ship-checklist.md; DECISIONS.md n7 note; AppViewModel/AppDependencies boundary preserved; I2VerticalDivider; responsive ContactsWorkspaceView; Sidebar permission mini-footer request action
+- **Follow-ups:**
+  - Run real-account macOS TCC and Messages send QA [out of lane] — Full Disk Access, Contacts, Apple Events, Notifications, and real Messages account behavior require a signed app on the user account with real local history.
+  - Configure Apple Developer signing and notarization secrets [out of lane] — Production Developer ID signing, notarization, stapling, Gatekeeper assessment, and GitHub Release upload require real Apple and GitHub repository secrets.
+- **By:** n7 · 2026-07-04T20:00:17.273Z
+

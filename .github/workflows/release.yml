@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build an unsigned DMG without signing, notarization, or GitHub Release upload"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-release:
+    name: Build DMG
+    runs-on: macos-latest
+    env:
+      I2_RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true && '1' || '0' }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+      DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Validate release scripts
+        run: find scripts/release -maxdepth 1 -type f -name '*.sh' -exec bash -n {} \;
+
+      - name: Test
+        run: ./scripts/test.sh
+
+      - name: Build release artifacts
+        run: ./scripts/release/ci-release.sh
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2message-release-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            build/Release/i2Message-*.dmg
+            build/Release/SHA256SUMS.txt
+
+      - name: Create or update GitHub Release
+        if: github.ref_type == 'tag' && env.I2_RELEASE_DRY_RUN != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          title="i2Message ${tag}"
+          notes="Signed, notarized, stapled macOS DMG for ${tag}."
+          prerelease_args=()
+          if [[ "$tag" == *-* ]]; then
+            prerelease_args=(--prerelease)
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$DMG_PATH" "$CHECKSUM_FILE" --clobber
+          else
+            gh release create "$tag" "$DMG_PATH" "$CHECKSUM_FILE" \
+              --title "$title" \
+              --notes "$notes" \
+              "${prerelease_args[@]}"
+          fi

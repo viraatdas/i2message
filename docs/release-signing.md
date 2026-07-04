@@ -1,18 +1,18 @@
 # Release And Signing
 
-i2Message is prepared for direct-distributed, notarized macOS builds. The app is intentionally non-sandboxed because Messages history access requires user-granted Full Disk Access to private user storage that is not available inside a normal Mac App Store sandbox.
+i2Message uses direct Developer ID distribution. The full operational runbook is in `docs/release.md`; this document captures the signing assumptions that affect app architecture.
 
-## Debug Builds
+## Distribution Model
 
-Debug builds use automatic signing and the placeholder bundle identifier `dev.viraat.i2message`.
+The app is intentionally non-sandboxed because read-only Messages history access requires user-granted Full Disk Access to private user storage that is not available inside a normal Mac App Store sandbox.
 
-Set `DEVELOPMENT_TEAM` in `App/i2Message.xcconfig` locally or through Xcode if you want signed local launches outside Xcode.
+Debug builds and tests disable code signing in scripts so a fresh checkout can verify without Apple Developer credentials. Production releases require a Developer ID Application certificate, hardened runtime, notarization, stapling, and Gatekeeper assessment.
 
 ## Required User Permissions
 
 - Full Disk Access: required for read-only access to `~/Library/Messages/chat.db` and related attachment paths.
 - Contacts: optional, used to resolve names and avatars.
-- Apple Events: required only for supported automation flows such as future send operations through Messages.app.
+- Apple Events: required for supported Messages.app automation flows.
 - Notifications: optional, used for new-message alerts.
 
 Full Disk Access is a TCC grant, not an entitlement. The app must guide the user to System Settings when real Messages data access is enabled.
@@ -21,26 +21,28 @@ Full Disk Access is a TCC grant, not an entitlement. The app must guide the user
 
 Do not write directly to `chat.db`, WAL files, attachment directories, or any private Messages database. Use read-only SQLite connections for reads, and supported automation APIs for mutations where macOS permits them.
 
-## Hardened Runtime
+## Hardened Runtime And Entitlements
 
-`ENABLE_HARDENED_RUNTIME = YES` is enabled in project settings. The entitlement file currently contains only:
+`ENABLE_HARDENED_RUNTIME = YES` is enabled in project settings. Release validation fails if the signed app is missing the hardened runtime flag.
+
+The entitlement file currently contains:
 
 - `com.apple.security.automation.apple-events`
 
 Add additional hardened runtime exceptions only with a documented reason and a test that proves the feature requires it.
 
-## Archive
+## Release Entry Points
+
+Unsigned local packaging:
 
 ```sh
-./scripts/release/build-archive.sh
+./scripts/release/local-dry-run.sh
 ```
 
-The archive script expects a configured Developer ID Application identity and writes output under `build/Release`.
-
-## Notarization Template
+Full CI release orchestration:
 
 ```sh
-NOTARY_PROFILE=i2message-notary ./scripts/release/notarize-template.sh build/Release/i2Message.zip
+./scripts/release/ci-release.sh
 ```
 
-Create the notary keychain profile locally with `xcrun notarytool store-credentials`. Do not commit Apple IDs, passwords, app-specific passwords, issuer IDs, key IDs, private keys, or generated keychain profiles.
+Tag-triggered GitHub Releases are handled by `.github/workflows/release.yml`.
