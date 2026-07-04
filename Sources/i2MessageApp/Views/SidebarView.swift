@@ -29,7 +29,11 @@ struct SidebarView: View {
                 .listStyle(.sidebar)
             }
 
-            PermissionFooter(snapshot: model.permissionSnapshot)
+            PermissionFooter(snapshot: model.permissionSnapshot) { permission in
+                model.requestPermission(permission)
+            }
+
+            ActionAvailabilityFooter(snapshot: model.actionAvailabilitySnapshot)
         }
         .background(.bar)
         .accessibilityElement(children: .contain)
@@ -120,6 +124,7 @@ struct ConversationRow: View {
 
 struct PermissionFooter: View {
     let snapshot: PermissionSnapshot
+    let requestPermission: (AppPermission) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -139,6 +144,17 @@ struct PermissionFooter: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+
+                    if status.state != .granted {
+                        Button {
+                            requestPermission(status.permission)
+                        } label: {
+                            Image(systemName: "arrow.up.right.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Open or request \(status.permission.displayName)")
+                        .accessibilityLabel("Request \(status.permission.displayName)")
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -176,15 +192,89 @@ struct PermissionFooter: View {
     }
 
     private func label(for permission: AppPermission) -> String {
-        switch permission {
-        case .fullDiskAccess:
-            return "Full Disk Access"
-        case .contacts:
-            return "Contacts"
-        case .appleEventsMessages:
-            return "Messages Automation"
-        case .notifications:
-            return "Notifications"
+        permission.displayName
+    }
+}
+
+struct ActionAvailabilityFooter: View {
+    let snapshot: MessagingActionAvailabilitySnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist.checked")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+
+                Text("Parity")
+                    .font(.caption.weight(.medium))
+
+                Spacer()
+
+                Text("\(availableCount)/\(snapshot.statuses.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+
+            if let attentionStatus {
+                HStack(spacing: 8) {
+                    Image(systemName: iconName(for: attentionStatus.state))
+                        .foregroundStyle(color(for: attentionStatus.state))
+                        .frame(width: 16)
+
+                    Text(attentionStatus.kind.displayName)
+                        .font(.caption)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(attentionStatus.state.rawValue)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(12)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var availableCount: Int {
+        snapshot.statuses.filter { $0.state == .available }.count
+    }
+
+    private var attentionStatus: MessagingActionAvailability? {
+        snapshot.statuses.first { $0.state != .available }
+    }
+
+    private func iconName(for state: MessagingActionAvailabilityState) -> String {
+        switch state {
+        case .available:
+            return "checkmark.circle.fill"
+        case .requiresPermission, .requiresUserHandoff, .degraded:
+            return "exclamationmark.circle"
+        case .unsupported:
+            return "slash.circle"
+        case .unavailable:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func color(for state: MessagingActionAvailabilityState) -> Color {
+        switch state {
+        case .available:
+            return .green
+        case .requiresPermission, .requiresUserHandoff, .degraded:
+            return .orange
+        case .unsupported:
+            return .secondary
+        case .unavailable:
+            return .red
         }
     }
 }

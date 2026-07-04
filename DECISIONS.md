@@ -35,16 +35,31 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Why:** This workspace still had an unresolved generated `.gitignore` conflict even though n0 was merged; search verification needs a non-conflicted tree. Sibling agents touching `.gitignore` should integrate on top of the same combined entries rather than dropping either side.
 - **By:** n2 · 2026-07-04T02:06:00Z
 
-## n3: Implemented safe Messages parity actions and macOS integration without
-- **Did:** Implemented safe Messages parity actions and macOS integration without direct Messages storage mutation: action/status models, typed errors, AppleScript command builder, safe send/start/reply/open/handoff/mark-read service, macOS Automation/Contacts/Notifications/NSWorkspace/NSPasteboard adapters, UI permission/parity plumbing, parity docs, and CI-safe tests. Verified ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh pass; Xcode emits a local CoreSimulator version warning but macOS tests/build succeed. Left the pre-existing .gitignore jj conflict untouched.
+## n3: Implemented safe Messages parity actions and macOS integration
+- **Did:** Implemented safe Messages parity actions and macOS integration without direct Messages storage mutation: action/status models, typed errors, AppleScript command builder, safe send/start/reply/open/handoff/mark-read service behavior, macOS Automation/Contacts/Notifications/NSWorkspace/NSPasteboard adapters, UI permission/parity plumbing, parity docs, and CI-safe tests. Verified ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh pass; Xcode emits a local CoreSimulator version warning but macOS tests/build succeed.
 - **Interfaces:** Sources/i2MessageCore/MessagingActions/*: MessagingActionServicing, MessagingActionAvailabilitySnapshot, MessagingActionKind, MessagingActionError, MessagingActionResult, MessagingActionPolicy, MessagesAppleScriptCommandBuilder, MessagesAutomationControlling, MessagesHandoffControlling, DraftAttachmentInspecting, MessagingNotificationHooking, SafeMessagingActionService. Sources/i2MessageCore/SystemIntegration/*: MacOSMessagesAutomationController, MacOSMessagesHandoffController, MacOSPermissionManager, MacOSNotificationHook, PermissionStateMapper. Sources/i2MessageApp/Integration/AppIntegrationEnvironment.swift wires live integration into MockInboxViewModel; docs/parity.md defines parity matrix/manual QA.
 - **Follow-ups:**
   - Run real-device Messages send and attachment QA [out of lane] — Apple Events, TCC prompts, Messages account state, and notarized app behavior cannot be fully exercised in CI.
   - Wire production attachment picker and drag/drop UI [out of lane] — Core supports DraftAttachment validation/sending and paste/drag handoff, but the current mock composer still leaves the attach control disabled.
-  - Resolve pre-existing .gitignore jj conflict [out of lane] — jj status still reports a .gitignore conflict that was outside n3 integration scope and was not modified here.
 - **By:** n3 · 2026-07-04T02:06:19.584Z
+
 ## n2: Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserving
 - **Did:** Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserving Xcode/SPM/signing/Rudder ignores and consolidating the shared n0/n2/n3 decision records; jj reports no conflicts and ./scripts/test.sh passed.
 - **Interfaces:** .gitignore; DECISIONS.md
 - **By:** n2 · 2026-07-04T02:07:35.767Z
+
+## n1: Implemented the n1 read-only Messages and Contacts data layer:
+- **Did:** Implemented the n1 read-only Messages and Contacts data layer: read-only SQLite store, schema diagnostics, conversation/message/attachment repositories, stable cursor pagination, tapback/reply/attachment mapping, Contacts.framework resolver/cache, macOS permission manager, polling change detection, docs, synthetic fixtures, and tests/benchmarks. Verified with ./scripts/test.sh; tests passed. No real user chat.db or personal Messages data was read or added.
+- **Interfaces:** MessagesDataAccessStack; MessagesStoreConfiguration; ReadOnlyMessagesStore; MessagesStoreDiagnosticService/MessagesStoreDiagnostics; MessagesChangeMonitoring/PollingMessagesChangeMonitor; SQLiteConversationRepository; SQLiteMessageRepository; SQLiteAttachmentRepository; SystemContactsProvider; ContactResolving/MessageHandle; ContactHandleNormalizer; MacOSPermissionManager; docs/data-access.md; Tests/i2MessageCoreTests/DataAccess synthetic fixtures and benchmarks
+- **Follow-ups:**
+  - Wire UI/search lanes to MessagesDataAccessStack after merges [out of lane] — This lane exposes the real repositories, but app/search integration belongs to n4/n2/n5 after Rudder merges worker outputs.
+  - Tune production benchmark thresholds on target Macs [out of lane] — Synthetic tests prove bounded fetches without real data; hardware-normalized performance budgets should be set during end-to-end QA with representative local fixtures.
+- **By:** n1 · 2026-07-04T02:08:28.459Z
+## n3: Resolved the DECISIONS.md jj conflict by preserving the shared
+- **Did:** Resolved the DECISIONS.md jj conflict by preserving the shared n0/n2/n3/n1 decision history, consolidating duplicate n3 integration notes, and removing a stale .gitignore follow-up now covered by the later n2 resolution. Verified jj has no unresolved conflicts and ./scripts/test.sh passes with only the known local CoreSimulator warning.
+- **Interfaces:** DECISIONS.md shared decision log only; no code interfaces changed.
+- **Follow-ups:**
+  - Run real-device Messages send and attachment QA [out of lane] — Apple Events, TCC prompts, Messages account state, and notarized app behavior cannot be fully exercised in CI.
+  - Wire production attachment picker and drag/drop UI [out of lane] — Core supports DraftAttachment validation and handoff, but the composer UI still needs production picker/drop handling.
+- **By:** n3 · 2026-07-04T02:09:31.705Z
 

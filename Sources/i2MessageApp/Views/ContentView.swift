@@ -24,13 +24,17 @@ struct ContentView: View {
                 .help(model.semanticSearchEnabled ? "Semantic search on" : "Exact search")
                 .accessibilityLabel(model.semanticSearchEnabled ? "Semantic search on" : "Exact search")
 
-                Button {} label: {
+                Button {
+                    model.openNewConversationHandoff()
+                } label: {
                     Label("New Message", systemImage: "square.and.pencil")
                 }
-                .disabled(true)
-                .help("Sending will be added through supported Messages automation")
-                .accessibilityLabel("New message unavailable in mock mode")
+                .help("Open Messages.app for a new conversation")
+                .accessibilityLabel("New message handoff")
             }
+        }
+        .onAppear {
+            model.refreshIntegrationStatus()
         }
         .frame(minWidth: 920, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))

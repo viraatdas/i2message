@@ -12,6 +12,12 @@ struct ConversationDetailView: View {
 
                     Divider()
 
+                    if let notice = model.integrationNotice {
+                        IntegrationNoticeBar(message: notice) {
+                            model.integrationNotice = nil
+                        }
+                    }
+
                     if model.isLoadingMessages {
                         MessageSkeletonList()
                     } else {
@@ -61,6 +67,15 @@ struct ConversationHeader: View {
 
                 Spacer()
 
+                Button {
+                    model.openSelectedConversationInMessages()
+                } label: {
+                    Label("Open in Messages", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(.borderless)
+                .help("Open in Messages")
+                .accessibilityLabel("Open conversation in Messages")
+
                 Button {} label: {
                     Label("Conversation Details", systemImage: "info.circle")
                 }
@@ -87,6 +102,40 @@ struct ConversationHeader: View {
         }
 
         return names.joined(separator: ", ")
+    }
+}
+
+struct IntegrationNoticeBar: View {
+    let message: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss integration notice")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
     }
 }
 
@@ -296,6 +345,8 @@ struct AttachmentChip: View {
 }
 
 struct MockComposer: View {
+    @EnvironmentObject private var model: MockInboxViewModel
+
     let conversation: Conversation
 
     var body: some View {
@@ -307,17 +358,22 @@ struct MockComposer: View {
             .disabled(true)
             .accessibilityLabel("Attach unavailable in mock mode")
 
-            TextField("Message \(conversation.title)", text: .constant(""))
+            TextField("Message \(conversation.title)", text: $model.draftText)
                 .textFieldStyle(.roundedBorder)
-                .disabled(true)
-                .accessibilityLabel("Message composer unavailable in mock mode")
+                .disabled(model.isSendingDraft)
+                .accessibilityLabel("Message composer")
+                .onSubmit {
+                    model.sendDraftInSelectedConversation()
+                }
 
-            Button {} label: {
-                Label("Send", systemImage: "paperplane.fill")
+            Button {
+                model.sendDraftInSelectedConversation()
+            } label: {
+                Label(model.isSendingDraft ? "Sending" : "Send", systemImage: model.isSendingDraft ? "hourglass" : "paperplane.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(true)
-            .accessibilityLabel("Send unavailable in mock mode")
+            .disabled(model.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSendingDraft)
+            .accessibilityLabel(model.isSendingDraft ? "Sending message" : "Send message")
         }
         .padding(14)
     }

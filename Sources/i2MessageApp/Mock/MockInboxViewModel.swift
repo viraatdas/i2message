@@ -10,11 +10,19 @@ final class MockInboxViewModel: ObservableObject {
     @Published var semanticSearchEnabled: Bool = false
     @Published var isLoadingConversations: Bool = false
     @Published var isLoadingMessages: Bool = false
+    @Published var isSendingDraft: Bool = false
+    @Published var draftText: String = ""
+    @Published var integrationNotice: String?
     @Published var permissionSnapshot: PermissionSnapshot
+    @Published var actionAvailabilitySnapshot: MessagingActionAvailabilitySnapshot
 
     let contacts: [Contact]
 
-    init() {
+    private let integration: AppIntegrationEnvironment
+
+    init(integration: AppIntegrationEnvironment = .live()) {
+        let now = Date()
+        self.integration = integration
         self.contacts = MockData.contacts
         self.conversations = MockData.conversations
         self.selectedConversationID = MockData.conversations.first?.id
@@ -24,16 +32,29 @@ final class MockInboxViewModel: ObservableObject {
                     permission: .fullDiskAccess,
                     state: .notDetermined,
                     reason: "Needed for read-only Messages history access.",
-                    lastCheckedAt: Date()
+                    lastCheckedAt: now
+                ),
+                PermissionStatus(
+                    permission: .contacts,
+                    state: .notDetermined,
+                    reason: "Needed for names, avatars, and contact handoff.",
+                    lastCheckedAt: now
                 ),
                 PermissionStatus(
                     permission: .appleEventsMessages,
                     state: .notDetermined,
-                    reason: "Needed for future supported send automation.",
-                    lastCheckedAt: Date()
+                    reason: "Needed for supported Messages.app automation.",
+                    lastCheckedAt: now
+                ),
+                PermissionStatus(
+                    permission: .notifications,
+                    state: .notDetermined,
+                    reason: "Needed for local notification hooks.",
+                    lastCheckedAt: now
                 )
             ]
         )
+        self.actionAvailabilitySnapshot = .conservativeDefault(checkedAt: now)
     }
 
     var filteredConversations: [Conversation] {
@@ -114,6 +135,91 @@ final class MockInboxViewModel: ObservableObject {
         moveSelection(offset: -1)
     }
 
+    func refreshIntegrationStatus() {
+        Task {
+            await refreshIntegrationStatusNow()
+        }
+    }
+
+    func requestPermission(_ permission: AppPermission) {
+        Task {
+            do {
+                let status = try await integration.permissionManager.request(permission)
+                upsertPermissionStatus(status)
+                await refreshIntegrationStatusNow()
+            } catch {
+                integrationNotice = userFacingMessage(for: error)
+            }
+        }
+    }
+
+    func openSelectedConversationInMessages() {
+        guard let conversation = selectedConversation else {
+            integrationNotice = "Select a conversation before opening Messages.app."
+            return
+        }
+
+        Task {
+            do {
+                let result = try await integration.messagingActions.openConversation(
+                    handoffRequest(for: conversation, draftText: "")
+                )
+                integrationNotice = result.userMessage
+            } catch {
+                integrationNotice = userFacingMessage(for: error)
+            }
+        }
+    }
+
+    func openNewConversationHandoff() {
+        Task {
+            do {
+                let result = try await integration.messagingActions.openConversation(
+                    ConversationHandoffRequest(displayTitle: "New Message")
+                )
+                integrationNotice = result.userMessage
+            } catch {
+                integrationNotice = userFacingMessage(for: error)
+            }
+        }
+    }
+
+    func sendDraftInSelectedConversation() {
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return
+        }
+
+        guard let conversation = selectedConversation else {
+            integrationNotice = "Select a conversation before sending."
+            return
+        }
+
+        let draft = MessageDraft(
+            target: .handles(handles(for: conversation)),
+            text: draftText,
+            requestedService: conversation.service
+        )
+
+        isSendingDraft = true
+        Task {
+            defer { isSendingDraft = false }
+
+            do {
+                _ = try await integration.messagingActions.send(draft)
+                draftText = ""
+                integrationNotice = "Message sent through Messages.app."
+                await refreshIntegrationStatusNow()
+            } catch {
+                await fallbackToMessagesHandoff(
+                    error: error,
+                    conversation: conversation,
+                    draftText: draft.text
+                )
+            }
+        }
+    }
+
     private func moveSelection(offset: Int) {
         let visibleConversations = filteredConversations
         guard !visibleConversations.isEmpty else {
@@ -127,5 +233,92 @@ final class MockInboxViewModel: ObservableObject {
 
         let nextIndex = min(max(currentIndex + offset, 0), visibleConversations.count - 1)
         selectedConversationID = visibleConversations[nextIndex].id
+    }
+
+    private func refreshIntegrationStatusNow() async {
+        permissionSnapshot = await integration.permissionManager.permissionSnapshot()
+        actionAvailabilitySnapshot = await integration.messagingActions.availabilitySnapshot()
+    }
+
+    private func fallbackToMessagesHandoff(
+        error: Error,
+        conversation: Conversation,
+        draftText: String
+    ) async {
+        guard shouldOfferHandoff(for: error) else {
+            integrationNotice = userFacingMessage(for: error)
+            return
+        }
+
+        do {
+            _ = try await integration.messagingActions.preparePasteHandoff(
+                PasteHandoffRequest(text: draftText)
+            )
+            _ = try await integration.messagingActions.openConversation(
+                handoffRequest(for: conversation, draftText: draftText)
+            )
+            integrationNotice = "\(userFacingMessage(for: error)) Draft copied and Messages.app opened for manual send."
+        } catch {
+            integrationNotice = userFacingMessage(for: error)
+        }
+    }
+
+    private func shouldOfferHandoff(for error: Error) -> Bool {
+        guard let actionError = error as? MessagingActionError else {
+            return false
+        }
+
+        switch actionError {
+        case .permissionRequired,
+             .appleEventsDisabled,
+             .messagesAppNotSignedIn,
+             .recipientNotReachable,
+             .serviceUnavailable,
+             .unsupportedCapability,
+             .automationFailed:
+            return true
+        case .messagesAppUnavailable,
+             .attachmentTooLarge,
+             .validationFailed,
+             .handoffFailed:
+            return false
+        }
+    }
+
+    private func handoffRequest(for conversation: Conversation, draftText: String) -> ConversationHandoffRequest {
+        ConversationHandoffRequest(
+            conversationID: conversation.id,
+            displayTitle: conversation.title,
+            handles: handles(for: conversation),
+            draftText: draftText
+        )
+    }
+
+    private func handles(for conversation: Conversation) -> [ContactHandle] {
+        conversation.participants
+            .filter { !$0.isCurrentUser }
+            .flatMap(\.handles)
+    }
+
+    private func upsertPermissionStatus(_ status: PermissionStatus) {
+        var statuses = permissionSnapshot.statuses
+        if let index = statuses.firstIndex(where: { $0.permission == status.permission }) {
+            statuses[index] = status
+        } else {
+            statuses.append(status)
+        }
+        permissionSnapshot = PermissionSnapshot(statuses: statuses)
+    }
+
+    private func userFacingMessage(for error: Error) -> String {
+        if let localizedError = error as? LocalizedError {
+            let description = localizedError.errorDescription ?? error.localizedDescription
+            if let suggestion = localizedError.recoverySuggestion {
+                return "\(description) \(suggestion)"
+            }
+            return description
+        }
+
+        return error.localizedDescription
     }
 }
