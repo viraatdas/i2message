@@ -1,302 +1,321 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import i2MessageCore
 
 struct ConversationDetailView: View {
-    @EnvironmentObject private var model: MockInboxViewModel
+    @EnvironmentObject private var model: AppViewModel
+    @State private var showsInspector = true
 
     var body: some View {
         Group {
             if let conversation = model.selectedConversation {
                 VStack(spacing: 0) {
-                    ConversationHeader(conversation: conversation)
+                    ConversationHeader(conversation: conversation, showsInspector: $showsInspector)
+                    I2Divider()
 
-                    Divider()
+                    HStack(spacing: 0) {
+                        VStack(spacing: 0) {
+                            TranscriptView(conversation: conversation)
+                            I2Divider()
+                            ComposerView(conversation: conversation)
+                        }
 
-                    if let notice = model.integrationNotice {
-                        IntegrationNoticeBar(message: notice) {
-                            model.integrationNotice = nil
+                        if showsInspector {
+                            I2Divider()
+                                .frame(width: 1)
+                            ConversationInspector(conversation: conversation)
+                                .frame(width: I2Layout.inspectorWidth)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
                     }
-
-                    if model.isLoadingMessages {
-                        MessageSkeletonList()
-                    } else {
-                        TranscriptView(
-                            conversation: conversation,
-                            messages: model.selectedMessages
-                        )
-                    }
-
-                    Divider()
-
-                    MockComposer(conversation: conversation)
                 }
             } else {
                 EmptyStateView(
                     title: "Select a conversation",
-                    message: "Conversation history and search results will appear here.",
+                    message: "Conversation history, attachments, search hits, and composer state will appear here.",
                     systemImage: "message"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(.background)
+        .background(I2Palette.appBackground)
     }
 }
 
-struct ConversationHeader: View {
-    @EnvironmentObject private var model: MockInboxViewModel
-
+private struct ConversationHeader: View {
+    @EnvironmentObject private var model: AppViewModel
     let conversation: Conversation
+    @Binding var showsInspector: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                AvatarStack(contacts: conversation.participants.filter { !$0.isCurrentUser })
+        HStack(alignment: .center, spacing: 12) {
+            AvatarStack(contacts: conversation.participants.filter { !$0.isCurrentUser }, size: 36)
 
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 7) {
                     Text(conversation.title)
                         .font(.title3.weight(.semibold))
                         .lineLimit(1)
 
-                    Text(participantSummary)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    if conversation.pinnedRank != nil {
+                        Image(systemName: "pin.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
-                Spacer()
-
-                Button {
-                    model.openSelectedConversationInMessages()
-                } label: {
-                    Label("Open in Messages", systemImage: "arrow.up.forward.app")
-                }
-                .buttonStyle(.borderless)
-                .help("Open in Messages")
-                .accessibilityLabel("Open conversation in Messages")
-
-                Button {} label: {
-                    Label("Conversation Details", systemImage: "info.circle")
-                }
-                .buttonStyle(.borderless)
-                .help("Conversation Details")
-                .accessibilityLabel("Conversation details")
+                Text(model.contactNames(for: conversation).isEmpty ? conversation.service.rawValue : model.contactNames(for: conversation))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
 
-            if !model.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                SearchSummaryBar()
+            Spacer(minLength: 12)
+
+            if let total = model.selectedTranscriptState.totalCount {
+                I2Pill(title: "\(model.selectedMessages.count)/\(total)", systemImage: "text.bubble", tint: .secondary)
             }
-        }
-    }
 
-    private var participantSummary: String {
-        let names = conversation.participants
-            .filter { !$0.isCurrentUser }
-            .map(\.displayName)
-
-        if names.isEmpty {
-            return conversation.service.rawValue
-        }
-
-        return names.joined(separator: ", ")
-    }
-}
-
-struct IntegrationNoticeBar: View {
-    let message: String
-    let dismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "info.circle")
-                .foregroundStyle(.secondary)
-
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer()
-
-            Button(action: dismiss) {
-                Image(systemName: "xmark.circle.fill")
-                    .symbolRenderingMode(.hierarchical)
+            Button {
+                model.searchConversationScope = conversation.id
+                model.searchQuery = conversation.title
+                model.sidebarDestination = .search
+                Task { await model.performSearch(reset: true) }
+            } label: {
+                Label("Search This Thread", systemImage: "magnifyingglass")
             }
             .buttonStyle(.borderless)
-            .help("Dismiss")
-            .accessibilityLabel("Dismiss integration notice")
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-    }
-}
+            .help("Search this thread")
 
-struct SearchSummaryBar: View {
-    @EnvironmentObject private var model: MockInboxViewModel
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: model.semanticSearchEnabled ? "sparkles" : "magnifyingglass")
-                .foregroundStyle(.secondary)
-
-            Text(model.semanticSearchEnabled ? "Semantic" : "Exact")
-                .font(.callout.weight(.semibold))
-
-            Text("\(model.searchResults.count) results")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-
-            Spacer()
-
-            Button(model.semanticSearchEnabled ? "Exact" : "Semantic") {
-                model.semanticSearchEnabled.toggle()
+            Button {
+                showsInspector.toggle()
+            } label: {
+                Label(showsInspector ? "Hide Details" : "Show Details", systemImage: "info.circle")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.borderless)
+            .help(showsInspector ? "Hide details" : "Show details")
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.08))
-        .accessibilityElement(children: .combine)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .contain)
     }
 }
 
-struct TranscriptView: View {
-    @EnvironmentObject private var model: MockInboxViewModel
-
+private struct TranscriptView: View {
+    @EnvironmentObject private var model: AppViewModel
     let conversation: Conversation
-    let messages: [Message]
 
     var body: some View {
-        if messages.isEmpty {
-            EmptyStateView(
-                title: "No messages",
-                message: "This thread has no mock transcript yet.",
-                systemImage: "text.bubble"
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        LoadMoreMessagesButton()
-
-                        ForEach(messages) { message in
-                            MessageBubble(
-                                message: message,
-                                sender: model.contact(for: message.senderID)
-                            )
-                            .id(message.id)
-                        }
-                    }
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        let state = model.selectedTranscriptState
+        Group {
+            switch state.phase {
+            case .loading:
+                MessageSkeletonList()
+            case .empty:
+                EmptyStateView(
+                    title: "No messages",
+                    message: "This thread has no loaded mock transcript yet.",
+                    systemImage: "text.bubble"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed(let message):
+                EmptyStateView(
+                    title: "Transcript unavailable",
+                    message: message,
+                    systemImage: "exclamationmark.triangle",
+                    actionTitle: "Retry"
+                ) {
+                    Task { await model.loadSelectedConversation(reset: true) }
                 }
-                .onAppear {
-                    if let lastID = messages.last?.id {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .idle, .loaded:
+                transcriptScroll(messages: model.selectedMessages, state: state)
             }
         }
     }
+
+    private func transcriptScroll(messages: [Message], state: TranscriptPageState) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Spacer()
+                        Button {
+                            Task { await model.loadOlderMessages() }
+                        } label: {
+                            if state.isLoadingOlder {
+                                Label("Loading Earlier", systemImage: "arrow.up.circle")
+                            } else {
+                                Label(state.hasMoreOlder ? "Load Earlier" : "Start of Thread", systemImage: state.hasMoreOlder ? "arrow.up.circle" : "checkmark.circle")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(!state.hasMoreOlder || state.isLoadingOlder)
+                        Spacer()
+                    }
+                    .padding(.bottom, 2)
+
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        if shouldShowDateDivider(at: index, messages: messages) {
+                            DateDivider(date: message.sentAt)
+                        }
+
+                        MessageBubble(
+                            message: message,
+                            sender: model.contact(for: message.senderID),
+                            isHighlighted: model.highlightedMessageID == message.id,
+                            density: model.settings.transcriptDensity
+                        )
+                        .id(message.id)
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onAppear {
+                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            }
+            .onChange(of: model.highlightedMessageID) { _ in
+                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            }
+            .onChange(of: messages.last?.id) { _ in
+                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            }
+        }
+    }
+
+    private func scrollToRelevantMessage(proxy: ScrollViewProxy, messages: [Message]) {
+        if let highlighted = model.highlightedMessageID {
+            proxy.scrollTo(highlighted, anchor: .center)
+        } else if let last = messages.last?.id {
+            proxy.scrollTo(last, anchor: .bottom)
+        }
+    }
+
+    private func shouldShowDateDivider(at index: Int, messages: [Message]) -> Bool {
+        guard index > 0 else {
+            return true
+        }
+        return !Calendar.current.isDate(messages[index].sentAt, inSameDayAs: messages[index - 1].sentAt)
+    }
 }
 
-struct LoadMoreMessagesButton: View {
+private struct DateDivider: View {
+    let date: Date
+
     var body: some View {
         HStack {
-            Spacer()
-            Button {
-            } label: {
-                Label("Load Earlier", systemImage: "arrow.up.circle")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(true)
-            .accessibilityLabel("Load earlier messages unavailable in mock mode")
-            Spacer()
+            Rectangle().fill(I2Palette.separator).frame(height: 1)
+            Text(date.formatted(date: .abbreviated, time: .omitted))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+            Rectangle().fill(I2Palette.separator).frame(height: 1)
         }
-        .padding(.bottom, 4)
+        .padding(.vertical, 6)
+        .accessibilityHidden(true)
     }
 }
 
-struct MessageBubble: View {
+private struct MessageBubble: View {
     let message: Message
     let sender: Contact?
+    let isHighlighted: Bool
+    let density: TranscriptDensity
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            if message.direction == .outgoing {
-                Spacer(minLength: 80)
-            } else {
-                AvatarView(contact: sender, size: 26)
-            }
-
-            VStack(alignment: message.direction == .outgoing ? .trailing : .leading, spacing: 4) {
-                if message.direction == .incoming {
-                    Text(sender?.displayName ?? "Unknown")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    if !message.body.plainText.isEmpty {
-                        Text(message.body.plainText)
-                            .font(.body)
-                            .foregroundStyle(.primary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    ForEach(message.attachments) { attachment in
-                        AttachmentChip(attachment: attachment)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(backgroundStyle)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(maxWidth: 560, alignment: message.direction == .outgoing ? .trailing : .leading)
-
-                HStack(spacing: 5) {
-                    Text(message.sentAt.formatted(date: .omitted, time: .shortened))
-                    if message.direction == .outgoing {
-                        Text(message.status.rawValue)
-                    }
-                }
-                .font(.caption2)
+        if message.direction == .system {
+            Text(message.body.plainText)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .monospacedDigit()
-            }
-            .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
+                .frame(maxWidth: .infinity)
+        } else {
+            HStack(alignment: .bottom, spacing: 8) {
+                if message.direction == .outgoing {
+                    Spacer(minLength: 80)
+                } else {
+                    AvatarView(contact: sender, size: 26)
+                }
 
-            if message.direction != .outgoing {
-                Spacer(minLength: 80)
+                VStack(alignment: message.direction == .outgoing ? .trailing : .leading, spacing: 4) {
+                    if message.direction == .incoming {
+                        Text(sender?.displayName ?? "Unknown")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    VStack(alignment: .leading, spacing: bubbleSpacing) {
+                        if !message.body.plainText.isEmpty {
+                            Text(message.body.plainText)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        ForEach(message.attachments) { attachment in
+                            AttachmentChip(attachment: attachment)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, density == .compact ? 7 : 9)
+                    .background(backgroundStyle)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(isHighlighted ? Color.accentColor.opacity(0.85) : Color.clear, lineWidth: 2)
+                    }
+                    .frame(maxWidth: maxBubbleWidth, alignment: message.direction == .outgoing ? .trailing : .leading)
+
+                    if !message.reactions.isEmpty {
+                        ReactionCluster(reactions: message.reactions)
+                            .padding(.top, -1)
+                    }
+
+                    HStack(spacing: 5) {
+                        Text(message.sentAt.formatted(date: .omitted, time: .shortened))
+                        if message.isEdited {
+                            Text("edited")
+                        }
+                        if message.direction == .outgoing {
+                            Text(message.status.statusLabel)
+                                .foregroundStyle(message.status == .failed ? .red : .secondary)
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
+
+                if message.direction != .outgoing {
+                    Spacer(minLength: 80)
+                }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var bubbleSpacing: CGFloat {
+        density == .compact ? 5 : 8
+    }
+
+    private var maxBubbleWidth: CGFloat {
+        density == .compact ? I2Layout.compactTranscriptMaxBubbleWidth : I2Layout.transcriptMaxBubbleWidth
     }
 
     private var backgroundStyle: Color {
         switch message.direction {
         case .outgoing:
-            return Color.accentColor.opacity(0.16)
+            return I2Palette.outgoingBubble
         case .incoming:
-            return Color(nsColor: .controlBackgroundColor)
+            return I2Palette.incomingBubble
         case .system:
-            return Color(nsColor: .windowBackgroundColor)
+            return I2Palette.appBackground
         }
     }
 
@@ -306,75 +325,219 @@ struct MessageBubble: View {
     }
 }
 
-struct AttachmentChip: View {
-    let attachment: MessageAttachment
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: iconName)
-            Text(attachment.filename)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .font(.caption.weight(.medium))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Attachment \(attachment.filename)")
-    }
-
-    private var iconName: String {
-        switch attachment.kind {
-        case .image:
-            return "photo"
-        case .video:
-            return "video"
-        case .audio:
-            return "waveform"
-        case .file:
-            return "doc"
-        case .sticker:
-            return "face.smiling"
-        case .tapback:
-            return "hand.thumbsup"
-        case .unknown:
-            return "paperclip"
-        }
-    }
-}
-
-struct MockComposer: View {
-    @EnvironmentObject private var model: MockInboxViewModel
+private struct ComposerView: View {
+    @EnvironmentObject private var model: AppViewModel
+    @FocusState private var composerFocused: Bool
+    @State private var isDropTargeted = false
 
     let conversation: Conversation
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button {} label: {
-                Label("Attach", systemImage: "paperclip")
+        VStack(alignment: .leading, spacing: 8) {
+            if !model.currentDraftAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(model.currentDraftAttachments) { attachment in
+                            DraftAttachmentChip(attachment: attachment) {
+                                model.removeDraftAttachment(attachment)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
             }
-            .buttonStyle(.borderless)
-            .disabled(true)
-            .accessibilityLabel("Attach unavailable in mock mode")
 
-            TextField("Message \(conversation.title)", text: $model.draftText)
-                .textFieldStyle(.roundedBorder)
-                .disabled(model.isSendingDraft)
-                .accessibilityLabel("Message composer")
-                .onSubmit {
-                    model.sendDraftInSelectedConversation()
+            HStack(alignment: .bottom, spacing: 9) {
+                Button {
+                    model.addMockAttachment()
+                } label: {
+                    Label("Attach", systemImage: "paperclip")
+                }
+                .buttonStyle(.borderless)
+                .labelStyle(.iconOnly)
+                .help("Attach file")
+
+                ZStack(alignment: .topLeading) {
+                    if model.currentDraftText.isEmpty {
+                        Text("Message \(conversation.title)")
+                            .foregroundStyle(.secondary)
+                            .font(.body)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 8)
+                    }
+
+                    TextEditor(
+                        text: Binding(
+                            get: { model.currentDraftText },
+                            set: { newValue in
+                                model.updateDraftText(newValue)
+                            }
+                        )
+                    )
+                    .font(.body)
+                    .frame(minHeight: 34, maxHeight: 86)
+                    .scrollContentBackground(.hidden)
+                    .focused($composerFocused)
+                    .accessibilityLabel("Message composer")
+                }
+                .padding(2)
+                .background(isDropTargeted ? I2Palette.selectionFill : I2Palette.incomingBubble, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isDropTargeted ? Color.accentColor : I2Palette.separator, lineWidth: 1)
+                }
+                .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+                    if !providers.isEmpty {
+                        model.addDroppedAttachment(filename: "Dropped File")
+                    }
+                    return !providers.isEmpty
                 }
 
-            Button {
-                model.sendDraftInSelectedConversation()
-            } label: {
-                Label(model.isSendingDraft ? "Sending" : "Send", systemImage: model.isSendingDraft ? "hourglass" : "paperplane.fill")
+                Button {
+                    Task { await model.sendCurrentDraft() }
+                } label: {
+                    Label("Send", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .labelStyle(.iconOnly)
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(!model.canSendCurrentDraft)
+                .help("Send")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(model.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isSendingDraft)
-            .accessibilityLabel(model.isSendingDraft ? "Sending message" : "Send message")
+
+            HStack(spacing: 8) {
+                Text("Local mock composer")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let operation = model.sendOperation {
+                    I2Pill(title: operation.state.rawValue, systemImage: "paperplane", tint: operation.state == .failed ? .red : .secondary)
+                }
+                Spacer()
+                Text("Command-Return sends")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(I2Palette.appBackground)
+        .onChange(of: model.focusRequest) { request in
+            guard request == .composer else { return }
+            composerFocused = true
+            model.consumeFocusRequest(.composer)
+        }
+    }
+}
+
+private struct ConversationInspector: View {
+    @EnvironmentObject private var model: AppViewModel
+    let conversation: Conversation
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    I2SectionLabel(title: "Participants")
+                        .padding(.horizontal, -14)
+                    ForEach(conversation.participants.filter { !$0.isCurrentUser }) { contact in
+                        HStack(spacing: 9) {
+                            AvatarView(contact: contact, size: 28)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(contact.displayName)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(1)
+                                Text(contact.handles.first?.value ?? "No handle")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                model.selectContact(contact.id)
+                            } label: {
+                                Label("Open Contact", systemImage: "person.crop.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .labelStyle(.iconOnly)
+                            .help("Open contact")
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    I2SectionLabel(title: "Thread State")
+                        .padding(.horizontal, -14)
+                    detailRow("Service", conversation.service.rawValue)
+                    detailRow("Unread", "\(conversation.unreadCount)")
+                    detailRow("Loaded", "\(model.selectedMessages.count) messages")
+                    if let total = model.selectedTranscriptState.totalCount {
+                        detailRow("Total", "\(total) messages")
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    I2SectionLabel(title: "Recent Attachments")
+                        .padding(.horizontal, -14)
+                    let attachments = model.selectedMessages.flatMap(\.attachments).suffix(4)
+                    if attachments.isEmpty {
+                        Text("No attachments in the loaded page.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(attachments)) { attachment in
+                            AttachmentChip(attachment: attachment)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    I2SectionLabel(title: "Privacy")
+                        .padding(.horizontal, -14)
+                    Label("Read-only data boundary", systemImage: "lock")
+                        .font(.caption)
+                    Label("Semantic search is local", systemImage: "sparkles")
+                        .font(.caption)
+                    Label("Message bodies are not logged", systemImage: "eye.slash")
+                        .font(.caption)
+                }
+            }
+            .padding(14)
+        }
+        .background(I2Palette.sidebarBackground)
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .fontWeight(.medium)
+                .lineLimit(1)
+        }
+        .font(.caption)
+    }
+}
+
+private extension MessageDeliveryStatus {
+    var statusLabel: String {
+        switch self {
+        case .draft:
+            return "draft"
+        case .queued:
+            return "queued"
+        case .sending:
+            return "sending"
+        case .sent:
+            return "sent"
+        case .delivered:
+            return "delivered"
+        case .read:
+            return "read"
+        case .failed:
+            return "failed"
+        case .unknown:
+            return "unknown"
+        }
     }
 }

@@ -87,3 +87,40 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift; Sources/i2MessageCore/DataAccess/MessagesDataAccessStack.swift; docs/data-access.md
 - **By:** n1 · 2026-07-04T02:12:47.604Z
 
+## n4: Resolved UI merge conflicts by keeping the AppViewModel shell
+- **Did:** Resolved conflicts in the root ignore file, shared decisions, and the app UI files by retaining the n4 native SwiftUI `AppViewModel` shell, deleting the obsolete `MockInboxViewModel`, and preserving the shared n1/n2/n3 decision history.
+- **Why:** The n4 shell replaces the earlier mock inbox with protocol-backed dependencies; production data/search/parity providers should wire through `AppDependencies` in the integration lane rather than reviving the old view model.
+- **Interfaces:** `.gitignore`; `DECISIONS.md`; `Sources/i2MessageApp/Views/ContentView.swift`; `Sources/i2MessageApp/Views/ConversationDetailView.swift`; `Sources/i2MessageApp/Views/SidebarView.swift`; removed `Sources/i2MessageApp/Mock/MockInboxViewModel.swift`.
+- **By:** n4 · 2026-07-04T02:20:00Z
+## n4: Resolved all jj merge conflicts for n4 by preserving
+- **Did:** Resolved all jj merge conflicts for n4 by preserving the native SwiftUI AppViewModel shell, combined ignore/decision history, and deleting the obsolete MockInboxViewModel. jj reports no conflicts. Verified with ./scripts/test.sh and ./scripts/build.sh; both succeeded with only the known local CoreSimulator warning.
+- **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppDependencies remains the UI integration boundary for production data/search/parity providers.
+- **Follow-ups:**
+  - Wire production providers into AppDependencies [out of lane] — The resolved UI intentionally keeps the n4 mock/foundation shell; n1/n2/n3 real providers should be connected in the integration lane without reviving MockInboxViewModel.
+- **By:** n4 · 2026-07-04T02:17:26.126Z
+
+## n2: Confirmed DECISIONS.md merge resolution is clean: the shared log
+- **Did:** Confirmed DECISIONS.md merge resolution is clean: the shared log preserves n0/n1/n2/n3 records and consolidated n4 resolution notes; jj reports no unresolved conflicts; ./scripts/test.sh passed. No additional file edits were needed in this resolver turn.
+- **Interfaces:** DECISIONS.md shared decision log only; no code interfaces changed in this resolver turn
+- **By:** n2 · 2026-07-04T19:00:50.387Z
+
+## n3: Verified the merge resolution for n3: jj reports no
+- **Did:** Verified the merge resolution for n3: jj reports no unresolved conflicts, .gitignore preserves the combined Xcode/SPM/signing/Rudder ignore set, DECISIONS.md preserves the shared n0/n1/n2/n3/n4 decision history, and ./scripts/test.sh passed with only the known local CoreSimulator warning.
+- **Interfaces:** .gitignore; DECISIONS.md shared decision log; no code interfaces changed by this resolver
+- **By:** n3 · 2026-07-04T19:00:57.481Z
+
+## n1: Verified the jj merge conflict resolution for n1/n4: no
+- **Did:** Verified the jj merge conflict resolution for n1/n4: no unresolved conflicts or conflict markers remain; preserved combined .gitignore and DECISIONS.md history, kept the n4 AppViewModel SwiftUI shell, deleted the obsolete MockInboxViewModel, and verified ./scripts/test.sh plus ./scripts/build.sh pass with only the known CoreSimulator warning.
+- **Interfaces:** Conflicted paths resolved: .gitignore, DECISIONS.md, Sources/i2MessageApp/Views/ContentView.swift, Sources/i2MessageApp/Views/ConversationDetailView.swift, Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppDependencies remains the production provider handoff boundary.
+- **Follow-ups:**
+  - Wire real providers through AppDependencies [out of lane] — Data/search/parity providers are available from sibling lanes, but final app integration belongs to the integration lane rather than this conflict resolver.
+- **By:** n1 · 2026-07-04T19:01:13.785Z
+
+## n5: Integrated live read-only Messages/Contacts, local exact/semantic search, safe …
+- **Did:** Integrated live read-only Messages/Contacts, local exact/semantic search, safe parity actions, permissions, background indexing, search-result transcript routing, fixture fallback, diagnostics, integration/performance tests, and performance/manual-smoke docs. Resolved inherited merge conflicts and verified with ./scripts/verify.sh.
+- **Interfaces:** AppDependencies.live(configuration:fileManager:); AppDependencies.fixture(...); AppDependencies.indexedFixture(...); AppDiagnostics; CompositeAppPermissionManager; RepositorySearchIndexCorpusProvider; UserDefaultsSettingsStore; AppViewModel.actionAvailabilitySnapshot/openSelectedConversationInMessages/loadMessages(... around:); docs/performance.md; Tests/i2MessageAppTests/Integration/AppIntegrationPerformanceTests.swift
+- **Follow-ups:**
+  - Real-account macOS QA [out of lane] — Full Disk Access, Automation prompts, Messages account state, and real send/handoff behavior require a signed app and local user account with Messages history; CI cannot fully exercise TCC.
+  - Very-large-history semantic indexing tuning [out of lane] — The current local vector scan meets the 12k synthetic target; much larger histories may need ANN indexing or stricter corpus chunking.
+- **By:** n5 · 2026-07-04T19:17:58.120Z
+

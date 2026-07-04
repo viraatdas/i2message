@@ -1,43 +1,109 @@
-import AppKit
 import SwiftUI
 import i2MessageCore
 
 struct ContentView: View {
-    @EnvironmentObject private var model: MockInboxViewModel
+    @EnvironmentObject private var model: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
+                .navigationSplitViewColumnWidth(
+                    min: I2Layout.sidebarMinWidth,
+                    ideal: I2Layout.sidebarIdealWidth,
+                    max: I2Layout.sidebarMaxWidth
+                )
         } detail: {
-            ConversationDetailView()
+            DetailRouterView()
         }
-        .searchable(text: $model.searchText, placement: .sidebar, prompt: "Search messages")
         .toolbar {
-            ToolbarItemGroup {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    model.semanticSearchEnabled.toggle()
+                    Task { await model.perform(.openSearch) }
                 } label: {
-                    Label(model.semanticSearchEnabled ? "Semantic search on" : "Exact search", systemImage: model.semanticSearchEnabled ? "sparkles" : "magnifyingglass")
+                    Label("Search", systemImage: "magnifyingglass")
                 }
-                .help(model.semanticSearchEnabled ? "Semantic search on" : "Exact search")
-                .accessibilityLabel(model.semanticSearchEnabled ? "Semantic search on" : "Exact search")
+                .help("Open search workspace")
 
                 Button {
-                    model.openNewConversationHandoff()
+                    model.openCommandPalette()
+                } label: {
+                    Label("Command Palette", systemImage: "command")
+                }
+                .help("Command palette")
+
+                Button {
+                    Task { await model.perform(.newMessage) }
                 } label: {
                     Label("New Message", systemImage: "square.and.pencil")
                 }
-                .help("Open Messages.app for a new conversation")
-                .accessibilityLabel("New message handoff")
+                .help("New message")
             }
         }
-        .onAppear {
-            model.refreshIntegrationStatus()
+        .sheet(isPresented: $model.isSettingsPresented) {
+            SettingsView()
+                .environmentObject(model)
+                .frame(minWidth: 660, minHeight: 540)
         }
-        .frame(minWidth: 920, minHeight: 620)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.selectedConversationID)
+        .overlay {
+            if model.isCommandPalettePresented {
+                CommandPaletteView()
+                    .environmentObject(model)
+                    .transition(.opacity)
+            }
+        }
+        .task {
+            await model.load()
+        }
+        .preferredColorScheme(model.settings.theme.colorScheme)
+        .frame(minWidth: I2Layout.minWindowWidth, minHeight: I2Layout.minWindowHeight)
+        .background(I2Palette.appBackground)
+        .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.selectedConversationID)
+        .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarDestination)
+    }
+}
+
+private struct DetailRouterView: View {
+    @EnvironmentObject private var model: AppViewModel
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Group {
+                switch model.sidebarDestination {
+                case .conversations:
+                    ConversationDetailView()
+                case .contacts:
+                    ContactsWorkspaceView()
+                case .search:
+                    SearchWorkspaceView()
+                }
+            }
+
+            if let banner = model.statusBanner {
+                StatusBannerView(
+                    banner: banner,
+                    action: {
+                        if banner.actionTitle != nil {
+                            model.isSettingsPresented = true
+                        }
+                    },
+                    dismiss: model.dismissBanner
+                )
+            }
+        }
+        .background(I2Palette.appBackground)
+    }
+}
+
+private extension AppTheme {
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
     }
 }
