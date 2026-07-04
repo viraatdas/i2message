@@ -85,16 +85,35 @@ targets:
         MARKETING_VERSION: 0.1.0
         PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.core-tests
 
+  i2MessageAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/i2MessageAppTests
+    dependencies:
+      - target: i2Message
+    hostApplication: i2Message
+    settings:
+      base:
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: 0.1.0
+        PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.app-tests
+
 schemes:
   i2Message:
     build:
       targets:
         i2Message: all
         i2MessageCoreTests: [test]
+        i2MessageAppTests: [test]
     test:
       gatherCoverageData: true
       targets:
         - name: i2MessageCoreTests
+          parallelizable: true
+          randomExecutionOrder: true
+        - name: i2MessageAppTests
           parallelizable: true
           randomExecutionOrder: true
     run:

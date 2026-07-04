@@ -87,3 +87,11 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift; Sources/i2MessageCore/DataAccess/MessagesDataAccessStack.swift; docs/data-access.md
 - **By:** n1 · 2026-07-04T02:12:47.604Z
 
+## n5: Wired end-to-end live app composition with fixture fallback and performance smoke
+- **Did:** Integrated the n1 read-only Messages/Contacts stack, n2 `LocalSearchService`, n3 safe Messages parity actions, and n4 SwiftUI shell through `AppDependencies.live()`. The app now launches from fixture seed data, hydrates real bounded pages when permissions allow, starts exact/semantic indexing in the background, observes repository changes to invalidate/rebuild search, routes search results into transcript anchor pages, uses safe Messages.app send/handoff, persists settings locally, and logs diagnostics without message contents. Added app integration/performance tests and docs/performance.md with measured synthetic results.
+- **Interfaces:** `AppDependencies.live(configuration:fileManager:)`; `AppDependencies.fixture(...)`; `AppDependencies.indexedFixture(...)`; `CompositeAppPermissionManager`; `RepositorySearchIndexCorpusProvider`; `UserDefaultsSettingsStore`; `AppDiagnostics`; `AppViewModel.actionAvailabilitySnapshot`; `AppViewModel.openSelectedConversationInMessages()`; `Tests/i2MessageAppTests/Integration/AppIntegrationPerformanceTests.swift`; `docs/performance.md`.
+- **Measured:** 120-conversation/12,000-message synthetic fixture: launch 1 ms, transcript older-page load 0.2 ms, exact search first page 2.6 ms, semantic first results 354 ms, transcript route 0.1 ms.
+- **Follow-ups:**
+  - Run real-account Messages send/Automation/Full Disk Access QA [out of lane] — TCC prompts and Messages account state cannot be fully automated in CI.
+  - Tune semantic indexing for very large histories [out of lane] — Current bounded vector scan meets the 12,000-message target; ANN indexing may be needed for much larger accounts.
+- **By:** n5 · 2026-07-04T12:14:00-07:00

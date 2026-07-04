@@ -2,7 +2,7 @@
 
 i2Message is a native SwiftUI macOS client for Messages/iMessage workflows. The app is built for complete Messages.app parity where macOS allows it, with faster loading, paginated browsing, exact search, local semantic search, and a restrained native interface.
 
-This repository starts with mock data only. Feature workers should add real readers, indexers, and automation behind the shared contracts in `Sources/i2MessageCore`.
+The app target wires live read-only Messages/Contacts access, local exact and semantic search, safe Messages.app automation, and fixture fallback behind the shared contracts in `Sources/i2MessageCore`.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ From a fresh checkout:
 ./scripts/run-mock-app.sh
 ```
 
-The scripts generate `i2Message.xcodeproj`, build into `build/DerivedData`, run unit tests, and open the mock macOS app.
+The scripts generate `i2Message.xcodeproj`, build into `build/DerivedData`, run unit tests, and open the macOS app. The app renders fixture data immediately and hydrates real Messages data when the required macOS permissions are available.
 
 The debug build and test scripts disable code signing so a fresh checkout can verify without a personal Apple Developer Team. Release/archive scripts keep signing enabled.
 
@@ -44,10 +44,11 @@ Use the `i2Message` scheme.
 - `project.yml` owns the Xcode project structure, targets, package dependencies, and schemes.
 - `App/` contains build settings, Info.plist, and signing/entitlement placeholders.
 - `Sources/i2MessageCore/` contains shared domain models and protocol contracts.
-- `Sources/i2MessageApp/` contains the SwiftUI mock shell.
+- `Sources/i2MessageApp/` contains the SwiftUI app shell, live dependency composition, and fixture providers for previews/tests.
 - `Resources/` contains app assets.
 - `Tests/` contains unit test scaffolding.
 - `scripts/` contains generation, build, test, run, and release hooks.
+- `docs/performance.md` documents integration smoke coverage, performance budgets, and manual QA.
 - `docs/release-signing.md` documents direct distribution, hardened runtime, and notarization.
 
 Feature workers should add source files under `Sources/` and tests under `Tests/`. Avoid editing `project.yml` unless a truly new target or dependency is required.
@@ -61,7 +62,7 @@ The XcodeGen manifest declares shared packages up front:
 - Swift Async Algorithms for async streams, debouncing, and indexing pipelines.
 - SwiftLog for shared structured logging.
 
-The mock app does not read Messages data and does not import these packages yet. They are present so data, search, and indexing workers can use them without changing project manifests.
+The app reads Messages data only through the read-only repository stack and uses these packages for SQLite access, FTS search, local indexing, and supporting data structures.
 
 ## Data Safety Rules
 
