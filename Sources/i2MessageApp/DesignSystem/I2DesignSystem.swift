@@ -91,3 +91,11 @@ struct I2Divider: View {
             .frame(height: 1 / max(NSScreen.main?.backingScaleFactor ?? 2, 1))
     }
 }
+
+struct I2VerticalDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(I2Palette.separator)
+            .frame(width: 1 / max(NSScreen.main?.backingScaleFactor ?? 2, 1))
+    }
+}

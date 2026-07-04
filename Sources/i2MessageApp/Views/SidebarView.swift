@@ -23,7 +23,7 @@ struct SidebarView: View {
             footer
         }
         .background(I2Palette.sidebarBackground)
-        .onChange(of: model.focusRequest) { request in
+        .onChange(of: model.focusRequest) { _, request in
             guard request == .sidebarSearch else { return }
             filterFocused = true
             model.consumeFocusRequest(.sidebarSearch)
@@ -181,7 +181,7 @@ struct SidebarView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .onChange(of: model.searchMode) { mode in
+                .onChange(of: model.searchMode) { _, mode in
                     Task { await model.setSearchMode(mode) }
                 }
 
@@ -216,7 +216,9 @@ struct SidebarView: View {
             }
 
             IndexingStatusView(progress: model.indexingProgress)
-            PermissionsMiniFooter(snapshot: model.permissionSnapshot)
+            PermissionsMiniFooter(snapshot: model.permissionSnapshot) { permission in
+                Task { await model.requestPermission(permission) }
+            }
             ActionAvailabilityFooter(snapshot: model.actionAvailabilitySnapshot)
         }
         .padding(10)
@@ -409,6 +411,7 @@ private struct SearchMiniResults: View {
 
 private struct PermissionsMiniFooter: View {
     let snapshot: PermissionSnapshot
+    let requestPermission: (AppPermission) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -426,6 +429,17 @@ private struct PermissionsMiniFooter: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+
+                    if status.state != .granted {
+                        Button {
+                            requestPermission(status.permission)
+                        } label: {
+                            Image(systemName: "arrow.up.right.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Open or request \(status.permission.displayName)")
+                        .accessibilityLabel("Request \(status.permission.displayName)")
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }

@@ -21,8 +21,7 @@ struct ConversationDetailView: View {
                         }
 
                         if showsInspector {
-                            I2Divider()
-                                .frame(width: 1)
+                            I2VerticalDivider()
                             ConversationInspector(conversation: conversation)
                                 .frame(width: I2Layout.inspectorWidth)
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -185,10 +184,10 @@ private struct TranscriptView: View {
             .onAppear {
                 scrollToRelevantMessage(proxy: proxy, messages: messages)
             }
-            .onChange(of: model.highlightedMessageID) { _ in
+            .onChange(of: model.highlightedMessageID) { _, _ in
                 scrollToRelevantMessage(proxy: proxy, messages: messages)
             }
-            .onChange(of: messages.last?.id) { _ in
+            .onChange(of: messages.last?.id) { _, _ in
                 scrollToRelevantMessage(proxy: proxy, messages: messages)
             }
         }
@@ -429,7 +428,7 @@ private struct ComposerView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(I2Palette.appBackground)
-        .onChange(of: model.focusRequest) { request in
+        .onChange(of: model.focusRequest) { _, request in
             guard request == .composer else { return }
             composerFocused = true
             model.consumeFocusRequest(.composer)

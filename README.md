@@ -49,7 +49,8 @@ Use the `i2Message` scheme.
 - `Tests/` contains unit test scaffolding.
 - `scripts/` contains generation, build, test, run, and release hooks.
 - `docs/performance.md` documents integration smoke coverage, performance budgets, and manual QA.
-- `docs/release-signing.md` documents direct distribution, hardened runtime, and notarization.
+- `docs/release.md` documents DMG packaging, GitHub Releases, signing secrets, notarization, and local dry runs.
+- `docs/release-signing.md` documents direct distribution, hardened runtime, and entitlement assumptions.
 
 Feature workers should add source files under `Sources/` and tests under `Tests/`. Avoid editing `project.yml` unless a truly new target or dependency is required.
 
@@ -80,6 +81,14 @@ Sending, deleting, editing, reacting, marking read, or mutating Messages state m
 ## Build And Signing
 
 Debug builds use automatic local signing. Direct distribution requires a Developer ID Application certificate, hardened runtime, notarization credentials, and the non-sandbox entitlement assumptions documented in `docs/release-signing.md`.
+
+Run an unsigned local DMG dry run with:
+
+```sh
+./scripts/release/local-dry-run.sh
+```
+
+Tagged releases are built by `.github/workflows/release.yml`; see `docs/release.md` for required repository secrets and release-tag instructions.
 
 No signing secrets, Apple IDs, app-specific passwords, API keys, or notarization profiles should be committed.
 

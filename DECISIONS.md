@@ -8,7 +8,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **By:** conductor · 1783128244908
 
 ## n0: Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding
-- **Did:** Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding, README/docs, mock native app shell, shared i2MessageCore domain contracts, unit tests, scripts, CI placeholder, and verified generate/build/test/open flows.
+- **Did:** Created the SwiftUI macOS foundation: XcodeGen project, signing/notarization scaffolding, README/docs, mock native app shell, shared i2MessageCore domain contracts, unit tests, scripts, and CI placeholder, and verified generate/build/test/open flows.
 - **Interfaces:** project.yml targets i2Message/i2MessageCore/i2MessageCoreTests; App/Info.plist, App/i2Message.entitlements, App/i2Message.xcconfig; Sources/i2MessageCore models Contact/Conversation/Message/MessageAttachment/SearchResult/SemanticSnippet/Page/Permission/AppSettings/SendOperation/I2MessageError plus repository/search/permission/settings/sending/read-only database protocols; Sources/i2MessageApp SwiftUI mock shell and MockInboxViewModel; scripts/generate-xcodeproj.sh build.sh test.sh run-mock-app.sh verify.sh release hooks
 - **Follow-ups:**
   - Implement real read-only Messages data adapter [out of lane] — Foundation exposes MessagesDatabaseReading and repository contracts, but real chat.db access and permission onboarding are outside this worker lane.
@@ -75,6 +75,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Why:** Swift modules cannot contain two public `MacOSPermissionManager` declarations or two same-named Swift source files; the data layer still performs read-only Full Disk Access diagnostics against the configured database URL.
 - **Interfaces:** `Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift`; `MessagesDataAccessStack.permissions` default implementation.
 - **By:** n1 · 2026-07-04T02:15:00Z
+
 ## n4: Delivered polished SwiftUI macOS app shell against mock/foundation protocols:
 - **Did:** Delivered polished SwiftUI macOS app shell against mock/foundation protocols: native split-view sidebar modes for conversations/contacts/search, lazy paginated transcript with bubbles/tapbacks/attachments, composer with mock attachment/drop/send flow, exact/semantic/hybrid search workspace with paged results and snippets, settings/permissions/indexing/privacy surfaces, command palette, loading/error/empty/offline states, previews, docs, and UI-model tests. Resolved inherited .gitignore conflict. Verified XcodeGen, debug build, and ./scripts/test.sh; visual QA note: UI follows DESIGN.md with native macOS hierarchy, restrained accent usage, compact readable controls, no marketing/glass/gradient patterns, and stable small-window split layout.
 - **Interfaces:** AppDependencies in Sources/i2MessageApp/Features/App wraps ConversationRepository, MessageRepository, ContactProviding, SearchProviding, SearchIndexing, PermissionManaging, SettingsStoring, and MessageSending; production providers can replace mock services without view rewrites. Added i2MessageAppTests target in project.yml and docs/ui.md UI contract.
@@ -82,6 +83,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Wire production providers into AppDependencies after n1/n2/n3 merge [out of lane] — This lane intentionally stayed on mock/foundation protocols while data/search/action workers own real implementations.
   - Add real lazy image thumbnails at AttachmentChip boundary [out of lane] — Current UI renders lightweight attachment chips and transfer states; production thumbnails should remain lazy-loaded once attachment preview providers exist.
 - **By:** n4 · 2026-07-04T02:11:14.277Z
+
 ## n1: Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserved
 - **Did:** Resolved jj merge conflicts in .gitignore and DECISIONS.md, preserved combined ignore rules and shared decision history, fixed merged Swift build issue by keeping n3 app-wide MacOSPermissionManager and renaming n1 data-layer checker to MessagesDataAccessPermissionManager, updated stack/docs/decisions, and verified ./scripts/test.sh succeeds.
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageCore/Permissions/MessagesDataAccessPermissionManager.swift; Sources/i2MessageCore/DataAccess/MessagesDataAccessStack.swift; docs/data-access.md
@@ -95,6 +97,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Run real-account Messages send/Automation/Full Disk Access QA [out of lane] — TCC prompts and Messages account state cannot be fully automated in CI.
   - Tune semantic indexing for very large histories [out of lane] — Current bounded vector scan meets the 12,000-message target; ANN indexing may be needed for much larger accounts.
 - **By:** n5 · 2026-07-04T12:14:00-07:00
+
 ## n5: Resolved all n5 jj merge conflicts by keeping the
 - **Did:** Resolved all n5 jj merge conflicts by keeping the live AppViewModel/AppDependencies integration, preserving combined ignore rules and the clean n5 decision log, deleting obsolete MockInboxViewModel, and retaining the polished SwiftUI conversation/sidebar/content views with live search, permissions, parity, and handoff UI. Verified with ./scripts/verify.sh: project generation, Debug macOS build, and full tests passed; jj resolve --list reports no conflicts.
 - **Interfaces:** .gitignore; DECISIONS.md; Sources/i2MessageApp/Views/ContentView.swift; Sources/i2MessageApp/Views/ConversationDetailView.swift; Sources/i2MessageApp/Views/SidebarView.swift; removed Sources/i2MessageApp/Mock/MockInboxViewModel.swift; AppViewModel/AppDependencies live integration remains the app boundary.
@@ -110,3 +113,11 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Cut a v* release tag and review the first signed release artifact [out of lane] — The implemented workflow is ready, but the first signed/notarized GitHub Release needs real secret-backed CI execution and manual artifact sanity review.
 - **By:** n6 · 2026-07-04T19:37:22.884Z
 
+## n7: Completed final QA polish and release readiness pass
+- **Did:** Resolved inherited n7 conflicts while preserving the n5 live AppViewModel/AppDependencies integration and n6 release pipeline, fixed the sidebar permission footer request action, updated deprecated SwiftUI `onChange` handlers, added a shared `I2VerticalDivider`, made the Contacts detail layout responsive for small windows, verified script/plist syntax, `./scripts/verify.sh`, synthetic performance, unsigned release DMG dry-run, credential validation behavior, and privacy scans, and added `docs/ship-checklist.md`.
+- **Interfaces:** `.gitignore`; `DECISIONS.md`; `docs/ship-checklist.md`; `Sources/i2MessageApp/DesignSystem/I2DesignSystem.swift` `I2VerticalDivider`; `Sources/i2MessageApp/Features/Contacts/ContactsWorkspaceView.swift`; `Sources/i2MessageApp/Views/SidebarView.swift`; `Sources/i2MessageApp/Views/ContentView.swift`; `Sources/i2MessageApp/Views/ConversationDetailView.swift`; removed obsolete `Sources/i2MessageApp/Mock/MockInboxViewModel.swift`.
+- **Measured:** 120-conversation/12,000-message synthetic fixture: launch 0.1463s, transcript older-page load 0.0002s, exact search first page 0.0035s, semantic first results 0.3525s, transcript route 0.0001s. Unsigned DMG: `build/Release/i2Message-0.1.0-unsigned.dmg`, SHA-256 `c513ac83aeabd6d325799695a30104fa4736dbb8878898821b0e9b2f0d1adf8e`.
+- **Follow-ups:**
+  - Run real-account macOS TCC and Messages send QA [out of lane] — Full Disk Access, Contacts, Automation, Notifications, and real Messages account behavior require the signed app on the user's account.
+  - Configure Apple Developer signing/notarization secrets [out of lane] — Developer ID signing, notarization, stapling, Gatekeeper assessment of signed artifacts, and GitHub Release publication require real repository secrets.
+- **By:** n7 · 2026-07-04T20:00:00Z

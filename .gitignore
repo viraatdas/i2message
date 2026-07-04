@@ -17,14 +17,16 @@ Package.resolved
 
 # Signing and release secrets
 *.p8
+*.p12
 *.cer
 *.mobileprovision
 *.provisionprofile
 *.developerprofile
+*.keychain-db
 notarytool-profile.json
 
 # Rudder local context
-RUDDER_SHARED.md
-RUDDER.md
-.rudder-worktrees/
 .rudder/
+.rudder-worktrees/
+RUDDER.md
+RUDDER_SHARED.md
