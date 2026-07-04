@@ -16,3 +16,16 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Add production app icon and signed archive export options [out of lane] — Signing and notarization templates are present, but final brand icon assets and team-specific export settings require owner choices/secrets.
 - **By:** n0 · 2026-07-04T01:37:20.602Z
 
+## n0: Resolved the .gitignore jj merge conflict by preserving both
+- **Did:** Resolved the .gitignore jj merge conflict by preserving both the SwiftUI foundation ignore rules and Rudder local-context ignore rules. Verified jj reports no conflicts and ./scripts/test.sh passed.
+- **Interfaces:** .gitignore now ignores generated Xcode/SPM/build artifacts, signing/notarization secrets, and Rudder local context files/directories.
+- **By:** n0 · 2026-07-04T01:39:16.099Z
+
+## n2: Implemented local privacy-preserving search subsystem: GRDB/SQLite FTS5 exact i…
+- **Did:** Implemented local privacy-preserving search subsystem: GRDB/SQLite FTS5 exact index, ranked snippets, prefix normalization, filters, paginated cursors, typeahead, recent searches, hybrid search, local natural-language filter parsing, transcript navigation targets, local semantic embeddings with Apple NaturalLanguage when available plus offline hashing fallback, chunked cancellable exact/semantic rebuilds, resumable semantic indexing, docs, and synthetic fixture tests/benchmark. Verified with ./scripts/test.sh and ./scripts/build.sh; both succeeded, with non-blocking CoreSimulator out-of-date warnings from Xcode only.
+- **Interfaces:** SearchIndexCorpusProviding, SearchIndexCorpus, StaticSearchIndexCorpusProvider, LocalSearchService, LocalSearchFilters, HybridSearchQuery, SearchSuggestion, RecentSearch, SearchNavigationTarget, LocalSearchIndexState, SemanticEmbeddingProviding, AutomaticLocalSemanticEmbedder, HashingSemanticEmbedder; files under Sources/i2MessageCore/Search/**, Sources/i2MessageCore/SemanticSearch/**, Tests/i2MessageCoreTests/Search/**, docs/search.md; LocalSearchService conforms to SearchProviding and SearchIndexing.
+- **Follow-ups:**
+  - Wire real repositories into SearchIndexCorpusProviding [out of lane] — Search now consumes a corpus boundary; the data layer should adapt real Messages/Contacts repository output into that provider once n1 lands.
+  - Integrate search UI with LocalSearchService extras [out of lane] — UI can use foundation search methods plus typeahead, hybridSearch, recentSearches, localIndexState, and navigationTarget for the polished search experience.
+- **By:** n2 · 2026-07-04T02:05:22.718Z
+
