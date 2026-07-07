@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import i2MessageCore
@@ -227,10 +228,15 @@ private struct DateDivider: View {
 }
 
 private struct MessageBubble: View {
+    @EnvironmentObject private var model: AppViewModel
     let message: Message
     let sender: Contact?
     let isHighlighted: Bool
     let density: TranscriptDensity
+
+    private var isOutgoing: Bool {
+        message.direction == .outgoing
+    }
 
     var body: some View {
         if message.direction == .system {
@@ -240,13 +246,13 @@ private struct MessageBubble: View {
                 .frame(maxWidth: .infinity)
         } else {
             HStack(alignment: .bottom, spacing: 8) {
-                if message.direction == .outgoing {
+                if isOutgoing {
                     Spacer(minLength: 80)
                 } else {
                     AvatarView(contact: sender, size: 26)
                 }
 
-                VStack(alignment: message.direction == .outgoing ? .trailing : .leading, spacing: 4) {
+                VStack(alignment: isOutgoing ? .trailing : .leading, spacing: 4) {
                     if message.direction == .incoming {
                         Text(sender?.displayName ?? "Unknown")
                             .font(.caption.weight(.medium))
@@ -254,40 +260,25 @@ private struct MessageBubble: View {
                             .lineLimit(1)
                     }
 
-                    VStack(alignment: .leading, spacing: bubbleSpacing) {
-                        if !message.body.plainText.isEmpty {
-                            Text(message.body.plainText)
-                                .font(.body)
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
+                    if let quoted = model.repliedMessage(for: message) {
+                        QuotedReplyView(
+                            message: quoted,
+                            senderName: model.senderName(for: quoted.senderID)
+                        ) {
+                            model.highlightedMessageID = quoted.id
                         }
+                        .frame(maxWidth: maxBubbleWidth, alignment: isOutgoing ? .trailing : .leading)
+                    }
 
-                        ForEach(message.attachments) { attachment in
-                            AttachmentChip(attachment: attachment)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, density == .compact ? 7 : 9)
-                    .background(backgroundStyle)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(isHighlighted ? Color.accentColor.opacity(0.85) : Color.clear, lineWidth: 2)
-                    }
-                    .frame(maxWidth: maxBubbleWidth, alignment: message.direction == .outgoing ? .trailing : .leading)
-
-                    if !message.reactions.isEmpty {
-                        ReactionCluster(reactions: message.reactions)
-                            .padding(.top, -1)
-                    }
+                    bubbleContent
+                        .frame(maxWidth: maxBubbleWidth, alignment: isOutgoing ? .trailing : .leading)
 
                     HStack(spacing: 5) {
                         Text(message.sentAt.formatted(date: .omitted, time: .shortened))
                         if message.isEdited {
                             Text("edited")
                         }
-                        if message.direction == .outgoing {
+                        if isOutgoing {
                             Text(message.status.statusLabel)
                                 .foregroundStyle(message.status == .failed ? .red : .secondary)
                         }
@@ -296,9 +287,9 @@ private struct MessageBubble: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 }
-                .frame(maxWidth: .infinity, alignment: message.direction == .outgoing ? .trailing : .leading)
+                .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
 
-                if message.direction != .outgoing {
+                if !isOutgoing {
                     Spacer(minLength: 80)
                 }
             }
@@ -306,6 +297,66 @@ private struct MessageBubble: View {
             .accessibilityLabel(accessibilityLabel)
         }
     }
+
+    private var bubbleContent: some View {
+        VStack(alignment: .leading, spacing: bubbleSpacing) {
+            if !message.body.plainText.isEmpty {
+                Text(message.body.plainText)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(message.attachments) { attachment in
+                AttachmentChip(attachment: attachment)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, density == .compact ? 7 : 9)
+        .background(backgroundStyle)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isHighlighted ? Color.accentColor.opacity(0.85) : Color.clear, lineWidth: 2)
+        }
+        .overlay(alignment: isOutgoing ? .topLeading : .topTrailing) {
+            if !message.reactions.isEmpty {
+                ReactionCluster(reactions: message.reactions)
+                    .offset(x: isOutgoing ? -10 : 10, y: -11)
+            }
+        }
+        .padding(.top, message.reactions.isEmpty ? 0 : 9)
+        .contextMenu {
+            Section("Tapback") {
+                ForEach(MessageBubble.tapbackKinds, id: \.self) { kind in
+                    Button {
+                        model.toggleReaction(kind, on: message)
+                    } label: {
+                        Text("\(ReactionCluster.emoji(for: kind, displayText: nil))  \(ReactionCluster.title(for: kind))")
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                model.beginReply(to: message)
+            } label: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+            }
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(message.body.plainText, forType: .string)
+            } label: {
+                Label("Copy Text", systemImage: "doc.on.doc")
+            }
+            .disabled(message.body.plainText.isEmpty)
+        }
+    }
+
+    static let tapbackKinds: [MessageReactionKind] = [.loved, .liked, .disliked, .laughed, .emphasized, .questioned]
 
     private var bubbleSpacing: CGFloat {
         density == .compact ? 5 : 8
@@ -332,15 +383,89 @@ private struct MessageBubble: View {
     }
 }
 
+private struct QuotedReplyView: View {
+    let message: Message
+    let senderName: String
+    var jump: () -> Void
+
+    var body: some View {
+        Button(action: jump) {
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.accentColor.opacity(0.7))
+                    .frame(width: 3)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(senderName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(message.body.plainText.isEmpty ? "Attachment" : message.body.plainText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.plain)
+        .help("Jump to replied message")
+        .accessibilityLabel("In reply to \(senderName): \(message.body.plainText)")
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var model: AppViewModel
     @FocusState private var composerFocused: Bool
     @State private var isDropTargeted = false
+    @State private var measuredTextHeight: CGFloat = 36
 
     let conversation: Conversation
 
+    private var composerHeight: CGFloat {
+        min(max(measuredTextHeight, 36), 120)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let replyTarget = model.currentReplyTarget {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Replying to \(model.senderName(for: replyTarget.senderID))")
+                            .font(.caption.weight(.semibold))
+                        Text(replyTarget.body.plainText.isEmpty ? "Attachment" : replyTarget.body.plainText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        model.cancelReply()
+                    } label: {
+                        Label("Cancel Reply", systemImage: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(.secondary)
+                    .help("Cancel reply")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(I2Palette.selectionFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             if !model.currentDraftAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -365,12 +490,29 @@ private struct ComposerView: View {
                 .help("Attach file")
 
                 ZStack(alignment: .topLeading) {
+                    // Invisible mirror of the draft text so the composer grows
+                    // with its content between the min and max heights below.
+                    Text(model.currentDraftText.isEmpty ? " " : model.currentDraftText)
+                        .font(.body)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                            measuredTextHeight = height
+                        }
+                        .opacity(0)
+                        .accessibilityHidden(true)
+
                     if model.currentDraftText.isEmpty {
                         Text("Message \(conversation.title)")
-                            .foregroundStyle(.secondary)
                             .font(.body)
-                            .padding(.horizontal, 7)
+                            .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                            .padding(.horizontal, 5)
                             .padding(.vertical, 8)
+                            .lineLimit(1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
 
                     TextEditor(
@@ -382,12 +524,22 @@ private struct ComposerView: View {
                         )
                     )
                     .font(.body)
-                    .frame(minHeight: 34, maxHeight: 86)
                     .scrollContentBackground(.hidden)
+                    .padding(.vertical, 8)
                     .focused($composerFocused)
+                    .onKeyPress(.return, phases: .down) { press in
+                        guard press.modifiers.isEmpty else {
+                            return .ignored
+                        }
+                        if model.canSendCurrentDraft {
+                            Task { await model.sendCurrentDraft() }
+                        }
+                        return .handled
+                    }
                     .accessibilityLabel("Message composer")
                 }
-                .padding(2)
+                .frame(height: composerHeight)
+                .padding(.horizontal, 4)
                 .background(isDropTargeted ? I2Palette.selectionFill : I2Palette.incomingBubble, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -420,7 +572,7 @@ private struct ComposerView: View {
                     I2Pill(title: operation.state.rawValue, systemImage: "paperplane", tint: operation.state == .failed ? .red : .secondary)
                 }
                 Spacer()
-                Text("Command-Return sends")
+                Text("Return sends · Shift-Return adds a line")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

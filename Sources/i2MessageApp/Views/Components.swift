@@ -415,24 +415,80 @@ struct DraftAttachmentChip: View {
 struct ReactionCluster: View {
     let reactions: [MessageReaction]
 
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(reactions) { reaction in
-                Text(label(for: reaction))
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(I2Palette.elevatedBackground, in: Capsule())
-                    .overlay {
-                        Capsule().stroke(I2Palette.separator, lineWidth: 1)
-                    }
-                    .accessibilityLabel(reaction.displayText ?? reaction.kind.rawValue)
+    private struct ReactionGroup: Identifiable {
+        var id: String
+        var emoji: String
+        var count: Int
+        var title: String
+    }
+
+    private var groups: [ReactionGroup] {
+        var ordered: [ReactionGroup] = []
+        for reaction in reactions {
+            let emoji = ReactionCluster.emoji(for: reaction.kind, displayText: reaction.displayText)
+            if let index = ordered.firstIndex(where: { $0.emoji == emoji }) {
+                ordered[index].count += 1
+            } else {
+                ordered.append(
+                    ReactionGroup(
+                        id: emoji,
+                        emoji: emoji,
+                        count: 1,
+                        title: ReactionCluster.title(for: reaction.kind)
+                    )
+                )
             }
+        }
+        return ordered
+    }
+
+    var body: some View {
+        HStack(spacing: -5) {
+            ForEach(groups) { group in
+                HStack(spacing: 2) {
+                    Text(group.emoji)
+                        .font(.system(size: 11))
+                    if group.count > 1 {
+                        Text("\(group.count)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.horizontal, group.count > 1 ? 7 : 5)
+                .padding(.vertical, 4)
+                .background(I2Palette.elevatedBackground, in: Capsule())
+                .overlay {
+                    Capsule().stroke(I2Palette.separator, lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
+                .accessibilityLabel("\(group.count) \(group.title)")
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    static func emoji(for kind: MessageReactionKind, displayText: String?) -> String {
+        switch kind {
+        case .loved:
+            return "❤️"
+        case .liked:
+            return "👍"
+        case .disliked:
+            return "👎"
+        case .laughed:
+            return "😂"
+        case .emphasized:
+            return "‼️"
+        case .questioned:
+            return "❓"
+        case .custom:
+            return displayText ?? "💬"
         }
     }
 
-    private func label(for reaction: MessageReaction) -> String {
-        switch reaction.kind {
+    static func title(for kind: MessageReactionKind) -> String {
+        switch kind {
         case .loved:
             return "Love"
         case .liked:
@@ -440,13 +496,13 @@ struct ReactionCluster: View {
         case .disliked:
             return "Dislike"
         case .laughed:
-            return "HA"
+            return "Haha"
         case .emphasized:
-            return "!!"
+            return "Emphasize"
         case .questioned:
-            return "?"
+            return "Question"
         case .custom:
-            return reaction.displayText ?? "+"
+            return "Reaction"
         }
     }
 }

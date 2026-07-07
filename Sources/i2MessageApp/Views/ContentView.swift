@@ -65,20 +65,10 @@ struct ContentView: View {
 
 private struct DetailRouterView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Group {
-                switch model.sidebarDestination {
-                case .conversations:
-                    ConversationDetailView()
-                case .contacts:
-                    ContactsWorkspaceView()
-                case .search:
-                    SearchWorkspaceView()
-                }
-            }
-
+        VStack(spacing: 0) {
             if let banner = model.statusBanner {
                 StatusBannerView(
                     banner: banner,
@@ -89,9 +79,23 @@ private struct DetailRouterView: View {
                     },
                     dismiss: model.dismissBanner
                 )
+                .padding(.bottom, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            Group {
+                switch model.sidebarDestination {
+                case .conversations:
+                    ConversationDetailView()
+                case .contacts:
+                    ContactsWorkspaceView()
+                case .search:
+                    SearchWorkspaceView()
+                }
             }
         }
         .background(I2Palette.appBackground)
+        .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.statusBanner)
     }
 }
 

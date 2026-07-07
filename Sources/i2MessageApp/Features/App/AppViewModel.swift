@@ -40,6 +40,7 @@ final class AppViewModel: ObservableObject {
 
     @Published private var draftTexts: [ConversationID: String] = [:]
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
+    @Published private var replyTargets: [ConversationID: MessageID] = [:]
     @Published private(set) var sendOperation: SendOperation?
 
     let dependencies: AppDependencies
@@ -158,6 +159,13 @@ final class AppViewModel: ObservableObject {
         !currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !currentDraftAttachments.isEmpty
     }
 
+    var currentReplyTarget: Message? {
+        guard let selectedConversationID, let messageID = replyTargets[selectedConversationID] else {
+            return nil
+        }
+        return message(with: messageID, in: selectedConversationID)
+    }
+
     var searchResultCountLabel: String {
         if let searchTotalCount {
             return "\(searchTotalCount)"
@@ -222,9 +230,20 @@ final class AppViewModel: ObservableObject {
             conversations = page.items.sorted(by: MockAppDataset.conversationSort)
             conversationPhase = conversations.isEmpty ? .empty : .loaded
         } catch {
-            conversationPhase = .failed(error.localizedDescription)
             AppDiagnostics.failure("load_conversations", category: String(describing: type(of: error)))
-            showBanner(tone: .error, title: "Could not load conversations", message: userFacingMessage(for: error), actionTitle: "Open Settings")
+            if !dependencies.seed.conversations.isEmpty {
+                conversations = dependencies.seed.conversations.sorted(by: MockAppDataset.conversationSort)
+                conversationPhase = .loaded
+                showBanner(
+                    tone: .warning,
+                    title: "Showing sample conversations",
+                    message: "\(userFacingMessage(for: error)) Your real conversations will appear once access is granted.",
+                    actionTitle: "Open Settings"
+                )
+            } else {
+                conversationPhase = .failed(error.localizedDescription)
+                showBanner(tone: .error, title: "Could not load conversations", message: userFacingMessage(for: error), actionTitle: "Open Settings")
+            }
         }
     }
 
@@ -312,6 +331,13 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        // A conversation already served from fixtures pages locally; the live
+        // repository does not know fixture conversation IDs.
+        if dependencies.isLiveData, state.usesFixtureData {
+            loadFixtureTranscriptPage(for: conversationID, reset: reset)
+            return
+        }
+
         if reset {
             state.phase = .loading
         } else {
@@ -345,14 +371,51 @@ final class AppViewModel: ObservableObject {
             nextState.errorMessage = nil
             transcriptPages[conversationID] = nextState
         } catch {
+            AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
+            if dependencies.seed.messagesByConversation[conversationID] != nil {
+                loadFixtureTranscriptPage(for: conversationID, reset: true)
+                return
+            }
             var failedState = transcriptPages[conversationID] ?? .empty
             failedState.isLoadingOlder = false
             failedState.phase = .failed(userFacingMessage(for: error))
             failedState.errorMessage = userFacingMessage(for: error)
             transcriptPages[conversationID] = failedState
-            AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
             showBanner(tone: .error, title: "Could not load transcript", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
+    }
+
+    /// Serves a transcript page for a fixture conversation directly from the
+    /// seed dataset so fixture threads stay browsable when the live Messages
+    /// store is unreadable.
+    private func loadFixtureTranscriptPage(for conversationID: ConversationID, reset: Bool) {
+        let allMessages = dependencies.seed.messagesByConversation[conversationID, default: []]
+        let limit = max(settings.pageSize, 20)
+        var state = transcriptPages[conversationID] ?? .empty
+
+        let end: Int
+        if reset || !state.usesFixtureData {
+            end = allMessages.count
+            state.messages = []
+        } else if let cursor = state.olderCursor, cursor.rawValue.hasPrefix("older:"),
+                  let boundary = Int(cursor.rawValue.dropFirst("older:".count)) {
+            end = min(max(boundary, 0), allMessages.count)
+        } else {
+            end = 0
+        }
+
+        let start = max(0, end - limit)
+        let page = Array(allMessages[start..<end])
+        let existingIDs = Set(state.messages.map(\.id))
+        state.messages = page.filter { !existingIDs.contains($0.id) } + state.messages
+        state.olderCursor = start > 0 ? PageCursor(rawValue: "older:\(start)") : nil
+        state.hasMoreOlder = start > 0
+        state.isLoadingOlder = false
+        state.totalCount = allMessages.count
+        state.phase = state.messages.isEmpty ? .empty : .loaded
+        state.errorMessage = nil
+        state.usesFixtureData = true
+        transcriptPages[conversationID] = state
     }
 
     func updateDraftText(_ text: String) {
@@ -402,24 +465,88 @@ final class AppViewModel: ObservableObject {
         draftAttachments[selectedConversationID, default: []].removeAll { $0.id == attachment.id }
     }
 
+    func beginReply(to message: Message) {
+        replyTargets[message.conversationID] = message.id
+        focusRequest = .composer
+    }
+
+    func cancelReply() {
+        guard let selectedConversationID else {
+            return
+        }
+        replyTargets[selectedConversationID] = nil
+    }
+
+    func message(with id: MessageID, in conversationID: ConversationID) -> Message? {
+        transcriptPages[conversationID]?.messages.first { $0.id == id }
+            ?? dependencies.seed.messagesByConversation[conversationID]?.first { $0.id == id }
+    }
+
+    func repliedMessage(for message: Message) -> Message? {
+        guard let replyID = message.replyToMessageID else {
+            return nil
+        }
+        return self.message(with: replyID, in: message.conversationID)
+    }
+
+    func toggleReaction(_ kind: MessageReactionKind, on message: Message) {
+        var state = transcriptPages[message.conversationID] ?? .empty
+        guard let index = state.messages.firstIndex(where: { $0.id == message.id }) else {
+            return
+        }
+        guard !dependencies.isLiveData || state.usesFixtureData else {
+            showBanner(
+                tone: .info,
+                title: "Tapbacks need Messages.app",
+                message: "macOS does not let other apps send tapbacks. Use Open in Messages to react from Messages.app.",
+                actionTitle: nil
+            )
+            return
+        }
+
+        let currentUserID = dependencies.seed.currentUser.id
+        if let existing = state.messages[index].reactions.firstIndex(where: { $0.senderID == currentUserID && $0.kind == kind }) {
+            state.messages[index].reactions.remove(at: existing)
+        } else {
+            state.messages[index].reactions.removeAll { $0.senderID == currentUserID }
+            state.messages[index].reactions.append(
+                MessageReaction(
+                    id: "local.reaction.\(UUID().uuidString)",
+                    kind: kind,
+                    senderID: currentUserID,
+                    createdAt: Date()
+                )
+            )
+        }
+        transcriptPages[message.conversationID] = state
+    }
+
     func sendCurrentDraft() async {
         guard let selectedConversationID else {
             return
         }
+        let replyTargetID = replyTargets[selectedConversationID]
         let draft = MessageDraft(
             target: .existingConversation(selectedConversationID),
             text: currentDraftText,
             attachments: currentDraftAttachments,
+            replyToMessageID: replyTargetID,
             requestedService: selectedConversation?.service
         )
 
         do {
             sendOperation = try await dependencies.messageSender.validate(draft)
-            let receipt = try await dependencies.messageSender.send(draft)
+            let receipt: SendReceipt
+            if let replyTargetID, let actions = dependencies.messagingActions {
+                receipt = try await actions.reply(draft, to: replyTargetID)
+            } else {
+                receipt = try await dependencies.messageSender.send(draft)
+            }
             AppDiagnostics.operation("send_message", state: "accepted")
             appendSentMessage(receipt: receipt, draft: draft)
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
+            replyTargets[selectedConversationID] = nil
             sendOperation = nil
             try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
             if dependencies.isLiveData {
@@ -770,7 +897,8 @@ final class AppViewModel: ObservableObject {
             isLoadingOlder: false,
             phase: messages.isEmpty ? .empty : .loaded,
             totalCount: messages.count,
-            errorMessage: nil
+            errorMessage: nil,
+            usesFixtureData: true
         )
     }
 

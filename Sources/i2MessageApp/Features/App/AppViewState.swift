@@ -91,6 +91,7 @@ struct TranscriptPageState: Equatable {
     var phase: UIContentPhase
     var totalCount: Int?
     var errorMessage: String?
+    var usesFixtureData = false
 
     static let empty = TranscriptPageState(
         messages: [],

@@ -99,6 +99,59 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
+    func testReplyDraftSendsWithReplyContext() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        model.beginReply(to: target)
+        XCTAssertEqual(model.currentReplyTarget?.id, target.id)
+        XCTAssertEqual(model.focusRequest, .composer)
+
+        model.updateDraftText("Replying to the first message.")
+        await model.sendCurrentDraft()
+
+        let sent = try XCTUnwrap(model.selectedMessages.last)
+        XCTAssertEqual(sent.replyToMessageID, target.id)
+        XCTAssertEqual(model.repliedMessage(for: sent)?.id, target.id)
+        XCTAssertNil(model.currentReplyTarget)
+    }
+
+    func testCancelReplyClearsTarget() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        model.beginReply(to: target)
+        model.cancelReply()
+
+        XCTAssertNil(model.currentReplyTarget)
+    }
+
+    func testToggleReactionAddsAndRemovesTapback() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        let currentUserID = model.dependencies.seed.currentUser.id
+        let baseline = target.reactions.count
+
+        model.toggleReaction(.loved, on: target)
+        var updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline + 1)
+        XCTAssertTrue(updated.reactions.contains { $0.kind == .loved && $0.senderID == currentUserID })
+
+        // Switching to a different tapback replaces the current user's reaction.
+        model.toggleReaction(.laughed, on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline + 1)
+        XCTAssertTrue(updated.reactions.contains { $0.kind == .laughed && $0.senderID == currentUserID })
+
+        model.toggleReaction(.laughed, on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline)
+    }
+
     func testCommandPaletteFiltersAndRunsCommands() async {
         let model = AppViewModel(dependencies: .test())
 
