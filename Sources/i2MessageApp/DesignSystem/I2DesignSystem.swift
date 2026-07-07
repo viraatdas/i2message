@@ -34,7 +34,17 @@ enum I2Palette {
 
 enum I2Motion {
     static func stateChange(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .easeOut(duration: 0.18)
+        reduceMotion ? nil : .smooth(duration: 0.28)
+    }
+
+    /// Spring used for overlays/panels appearing and disappearing.
+    static func overlay(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.82)
+    }
+
+    /// Insertion/removal transition for floating overlays (Spotlight-style).
+    static var overlayTransition: AnyTransition {
+        .scale(scale: 0.97, anchor: .center).combined(with: .opacity)
     }
 }
 

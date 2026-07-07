@@ -46,27 +46,30 @@ struct ContentView: View {
                 .frame(minWidth: 660, minHeight: 540)
         }
         .overlay {
-            if model.isCommandPalettePresented {
-                CommandPaletteView()
-                    .environmentObject(model)
-                    .transition(.opacity)
-            } else if model.isSearchOverlayPresented {
-                SearchOverlayView()
-                    .environmentObject(model)
-                    .transition(.opacity)
-            } else if model.isNewMessagePresented {
-                NewMessageOverlayView()
-                    .environmentObject(model)
-                    .transition(.opacity)
-            } else if model.isInfoPanelPresented {
-                InfoPanelView()
-                    .environmentObject(model)
-                    .transition(.opacity)
-            } else if model.isReminderPresented {
-                ReminderPanelView()
-                    .environmentObject(model)
-                    .transition(.opacity)
+            Group {
+                if model.isCommandPalettePresented {
+                    CommandPaletteView()
+                        .environmentObject(model)
+                        .transition(I2Motion.overlayTransition)
+                } else if model.isSearchOverlayPresented {
+                    SearchOverlayView()
+                        .environmentObject(model)
+                        .transition(I2Motion.overlayTransition)
+                } else if model.isNewMessagePresented {
+                    NewMessageOverlayView()
+                        .environmentObject(model)
+                        .transition(I2Motion.overlayTransition)
+                } else if model.isInfoPanelPresented {
+                    InfoPanelView()
+                        .environmentObject(model)
+                        .transition(I2Motion.overlayTransition)
+                } else if model.isReminderPresented {
+                    ReminderPanelView()
+                        .environmentObject(model)
+                        .transition(I2Motion.overlayTransition)
+                }
             }
+            .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: anyOverlayPresented)
         }
         .task {
             await model.load()

@@ -164,19 +164,9 @@ private struct SharedMediaThumbnail: View {
     }
 
     private func loadThumbnail() async {
-        let source = attachment.thumbnailURL ?? attachment.fileURL
-        guard attachment.kind == .image, let source else { return }
-        let loaded = await Task.detached(priority: .utility) { () -> NSImage? in
-            guard let raw = NSImage(contentsOf: source) else { return nil }
-            let target = NSSize(width: 172, height: 172)
-            let thumb = NSImage(size: target)
-            thumb.lockFocus()
-            raw.draw(in: NSRect(origin: .zero, size: target),
-                     from: .zero, operation: .copy, fraction: 1)
-            thumb.unlockFocus()
-            return thumb
-        }.value
-        if let loaded { image = loaded }
+        if let loaded = await MediaThumbnail.load(attachment, maxDimension: 180) {
+            image = loaded
+        }
     }
 }
 

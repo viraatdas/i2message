@@ -161,6 +161,35 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(model.transcriptPages[AppViewModel.pendingConversationID])
     }
 
+    func testReadingConversationKeepsUnreadClearedAcrossReload() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let unread = try XCTUnwrap(model.filteredConversations.first { $0.unreadCount > 0 })
+        await model.selectConversation(unread.id)
+        XCTAssertEqual(model.conversations.first { $0.id == unread.id }?.unreadCount, 0)
+
+        // A live reload re-reads the (unchanged) store; the local read override
+        // must keep the badge cleared.
+        await model.loadConversations()
+        XCTAssertEqual(model.conversations.first { $0.id == unread.id }?.unreadCount, 0)
+    }
+
+    func testGlobalSearchSurfacesContactMatchesButScopedDoesNot() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let contact = try XCTUnwrap(model.contacts.first)
+        model.searchConversationScope = nil
+        model.searchQuery = contact.displayName
+        await model.performSearch(reset: true)
+        XCTAssertTrue(model.searchContactMatches.contains { $0.id == contact.id })
+
+        model.searchConversationScope = model.selectedConversationID
+        await model.performSearch(reset: true)
+        XCTAssertTrue(model.searchContactMatches.isEmpty)
+    }
+
     func testDateMentionDetectionAndCalendarAdd() async throws {
         let dependencies = AppDependencies.test()
         let calendar = try XCTUnwrap(dependencies.calendarWriter as? MockCalendarWriter)

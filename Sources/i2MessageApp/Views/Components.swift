@@ -1,6 +1,133 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import i2MessageCore
+
+/// Loads a downsized bitmap for an image or video attachment off the main
+/// thread. Returns nil for non-media or unreadable files.
+enum MediaThumbnail {
+    static func load(_ attachment: MessageAttachment, maxDimension: CGFloat) async -> NSImage? {
+        guard attachment.transferState == .local else { return nil }
+        let source = attachment.thumbnailURL ?? attachment.fileURL
+        guard let source else { return nil }
+        let kind = attachment.kind
+        return await Task.detached(priority: .utility) {
+            switch kind {
+            case .image, .sticker:
+                guard let raw = NSImage(contentsOf: source) else { return nil }
+                return downscale(raw, maxDimension: maxDimension)
+            case .video:
+                return videoFrame(source, maxDimension: maxDimension)
+            default:
+                return nil
+            }
+        }.value
+    }
+
+    private static func downscale(_ image: NSImage, maxDimension: CGFloat) -> NSImage {
+        let size = image.size
+        guard size.width > maxDimension || size.height > maxDimension,
+              size.width > 0, size.height > 0 else {
+            return image
+        }
+        let scale = min(maxDimension / size.width, maxDimension / size.height)
+        let target = NSSize(width: size.width * scale, height: size.height * scale)
+        let scaled = NSImage(size: target)
+        scaled.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: target),
+                   from: NSRect(origin: .zero, size: size),
+                   operation: .copy, fraction: 1)
+        scaled.unlockFocus()
+        return scaled
+    }
+
+    private static func videoFrame(_ url: URL, maxDimension: CGFloat) -> NSImage? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxDimension, height: maxDimension)
+        let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+            return nil
+        }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+}
+
+/// Inline image/video preview shown inside a message bubble. Falls back to the
+/// filename chip for non-media, still-downloading, or unreadable attachments.
+struct InlineAttachmentView: View {
+    let attachment: MessageAttachment
+    var maxWidth: CGFloat
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    private var isRenderableMedia: Bool {
+        (attachment.kind == .image || attachment.kind == .video || attachment.kind == .sticker)
+            && attachment.transferState == .local
+            && attachment.fileURL != nil
+    }
+
+    var body: some View {
+        if isRenderableMedia, !loadFailed {
+            preview
+        } else {
+            AttachmentChip(attachment: attachment)
+        }
+    }
+
+    private var aspectRatio: CGFloat {
+        if let dimensions = attachment.dimensions, dimensions.width > 0, dimensions.height > 0 {
+            return CGFloat(dimensions.width) / CGFloat(dimensions.height)
+        }
+        if let image, image.size.height > 0 {
+            return image.size.width / image.size.height
+        }
+        return 4.0 / 3.0
+    }
+
+    private var preview: some View {
+        ZStack {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(.quaternary.opacity(0.5))
+                    .overlay { ProgressView().controlSize(.small) }
+            }
+        }
+        .frame(width: previewWidth, height: previewWidth / max(aspectRatio, 0.4))
+        .frame(maxHeight: 340)
+        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .overlay(alignment: .center) {
+            if attachment.kind == .video {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(radius: 4)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .onTapGesture {
+            if let url = attachment.fileURL { NSWorkspace.shared.open(url) }
+        }
+        .help(attachment.filename)
+        .task(id: attachment.id) {
+            let loaded = await MediaThumbnail.load(attachment, maxDimension: 1100)
+            if let loaded {
+                image = loaded
+            } else {
+                loadFailed = true
+            }
+        }
+    }
+
+    private var previewWidth: CGFloat {
+        min(maxWidth, 300)
+    }
+}
 
 struct AvatarView: View {
     @EnvironmentObject private var model: AppViewModel

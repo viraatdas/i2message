@@ -9,7 +9,7 @@ struct NewMessageOverlayView: View {
     @State private var debounceTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack {
             Color.black.opacity(0.16)
                 .ignoresSafeArea()
                 .onTapGesture { model.closeNewMessage() }
@@ -28,7 +28,7 @@ struct NewMessageOverlayView: View {
                     .stroke(I2Palette.separator, lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.22), radius: 26, y: 18)
-            .padding(.top, 84)
+            .offset(y: -40)
         }
         .onAppear { recipientFocused = true }
         .onExitCommand { model.closeNewMessage() }

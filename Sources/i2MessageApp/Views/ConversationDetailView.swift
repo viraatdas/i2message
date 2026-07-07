@@ -275,7 +275,7 @@ private struct MessageBubble: View {
 
             ForEach(message.attachments) { attachment in
                 VStack(alignment: .leading, spacing: 3) {
-                    AttachmentChip(attachment: attachment)
+                    InlineAttachmentView(attachment: attachment, maxWidth: maxBubbleWidth)
 
                     if let description = model.attachmentDescriptions[attachment.id] {
                         Label(description, systemImage: "sparkles")

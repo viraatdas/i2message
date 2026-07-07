@@ -29,6 +29,7 @@ final class AppViewModel: ObservableObject {
     @Published var searchConversationScope: ConversationID?
     @Published private(set) var exactSearchResults: [SearchResult] = []
     @Published private(set) var semanticSnippets: [SemanticSnippet] = []
+    @Published private(set) var searchContactMatches: [Contact] = []
     @Published private(set) var searchPhase: UIContentPhase = .idle
     @Published private(set) var searchHasMore = false
     @Published private(set) var searchTotalCount: Int?
@@ -50,9 +51,11 @@ final class AppViewModel: ObservableObject {
     private var infoPanelConversationID: ConversationID?
 
     private var locallyUnreadIDs: Set<ConversationID> = []
+    private var locallyReadIDs: Set<ConversationID> = []
     @Published var isSettingsPresented = false
     @Published private(set) var focusRequest: FocusRequest?
     @Published private(set) var statusBanner: StatusBanner?
+    private var bannerDismissTask: Task<Void, Never>?
     @Published private(set) var isOffline = false
 
     @Published private var draftTexts: [ConversationID: String] = [:]
@@ -262,6 +265,7 @@ final class AppViewModel: ObservableObject {
             )
             conversations = page.items.sorted(by: MockAppDataset.conversationSort)
             applyLocalUnreadOverrides()
+            applyLocalReadOverrides()
             conversationPhase = conversations.isEmpty ? .empty : .loaded
         } catch {
             AppDiagnostics.failure("load_conversations", category: String(describing: type(of: error)))
@@ -300,7 +304,7 @@ final class AppViewModel: ObservableObject {
             pendingNewConversation = nil
         }
         selectedConversationID = id
-        clearLocalUnread(for: id)
+        markConversationRead(id)
         self.highlightedMessageID = highlightedMessageID
         if let highlightedMessageID {
             await loadMessages(in: id, reset: true, around: highlightedMessageID)
@@ -325,6 +329,7 @@ final class AppViewModel: ObservableObject {
         guard let selectedConversationID else {
             return
         }
+        locallyReadIDs.remove(selectedConversationID)
         locallyUnreadIDs.insert(selectedConversationID)
         applyLocalUnreadOverrides()
 
@@ -338,18 +343,22 @@ final class AppViewModel: ObservableObject {
     }
 
     private func applyLocalUnreadOverrides() {
-        guard !locallyUnreadIDs.isEmpty else {
-            return
-        }
         for index in conversations.indices where locallyUnreadIDs.contains(conversations[index].id) {
             conversations[index].unreadCount = max(1, conversations[index].unreadCount)
         }
     }
 
-    private func clearLocalUnread(for conversationID: ConversationID) {
-        guard locallyUnreadIDs.remove(conversationID) != nil else {
-            return
+    /// Reading a chat marks it read locally. The Messages database is read-only,
+    /// so this override is what keeps the badge cleared across live reloads.
+    private func applyLocalReadOverrides() {
+        for index in conversations.indices where locallyReadIDs.contains(conversations[index].id) {
+            conversations[index].unreadCount = 0
         }
+    }
+
+    private func markConversationRead(_ conversationID: ConversationID) {
+        locallyUnreadIDs.remove(conversationID)
+        locallyReadIDs.insert(conversationID)
         if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
             conversations[index].unreadCount = 0
         }
@@ -1021,11 +1030,16 @@ final class AppViewModel: ObservableObject {
         guard !query.isEmpty else {
             exactSearchResults = []
             semanticSnippets = []
+            searchContactMatches = []
             searchPhase = .idle
             searchTotalCount = nil
             searchHasMore = false
             searchPageCursor = nil
             return
+        }
+
+        if reset {
+            await updateSearchContactMatches(query)
         }
 
         searchPhase = .loading
@@ -1076,6 +1090,37 @@ final class AppViewModel: ObservableObject {
             return
         }
         await performSearch(reset: false)
+    }
+
+    /// Contacts matching the current query, shown as their own section in the
+    /// global (⌘⇧P) search overlay. Empty when the search is scoped to one chat.
+    private func updateSearchContactMatches(_ query: String) async {
+        guard searchConversationScope == nil else {
+            searchContactMatches = []
+            return
+        }
+
+        var pool = contacts
+        if dependencies.isLiveData,
+           let page = try? await dependencies.contactProvider.contacts(matching: query, page: PageRequest(limit: 20)) {
+            let extra = page.items.filter { !$0.isCurrentUser }
+            let existing = Set(pool.map(\.id))
+            pool += extra.filter { !existing.contains($0.id) }
+        }
+
+        let matches = pool.filter { contact in
+            contact.displayName.localizedCaseInsensitiveContains(query)
+                || contact.handles.contains { $0.value.localizedCaseInsensitiveContains(query) }
+        }
+        .sorted { (lastContactedAt(for: $0) ?? .distantPast) > (lastContactedAt(for: $1) ?? .distantPast) }
+
+        searchContactMatches = Array(matches.prefix(6))
+    }
+
+    /// Jumps to the contact's existing thread, or stages a new one, from search.
+    func openSearchContact(_ contact: Contact) async {
+        closeSearchOverlay()
+        await startConversation(with: contact)
     }
 
     func openSearchResult(_ result: SearchResult) async {
@@ -1194,6 +1239,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func dismissBanner() {
+        bannerDismissTask?.cancel()
         statusBanner = nil
     }
 
@@ -1385,6 +1431,7 @@ final class AppViewModel: ObservableObject {
                         guard let self else { return }
                         self.conversations = sorted
                         self.applyLocalUnreadOverrides()
+                        self.applyLocalReadOverrides()
                         if let selectedConversationID = self.selectedConversationID,
                            !sorted.contains(where: { $0.id == selectedConversationID }) {
                             self.selectedConversationID = sorted.first?.id
@@ -1580,8 +1627,36 @@ final class AppViewModel: ObservableObject {
         tone: StatusBanner.Tone,
         title: String,
         message: String,
-        actionTitle: String? = nil
+        actionTitle: String? = nil,
+        autoDismissAfter: TimeInterval? = nil
     ) {
-        statusBanner = StatusBanner(tone: tone, title: title, message: message, actionTitle: actionTitle)
+        bannerDismissTask?.cancel()
+        let banner = StatusBanner(tone: tone, title: title, message: message, actionTitle: actionTitle)
+        statusBanner = banner
+
+        // Transient, non-actionable confirmations fade on their own; anything
+        // the user might need to act on (warnings, errors, "Open Settings")
+        // stays until dismissed.
+        let delay = autoDismissAfter ?? Self.defaultBannerDismiss(tone: tone, actionTitle: actionTitle)
+        guard let delay else { return }
+        let bannerID = banner.id
+        bannerDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard let self, self.statusBanner?.id == bannerID else { return }
+            self.statusBanner = nil
+        }
+    }
+
+    private static func defaultBannerDismiss(tone: StatusBanner.Tone, actionTitle: String?) -> TimeInterval? {
+        guard actionTitle == nil else { return nil }
+        switch tone {
+        case .success:
+            return 3
+        case .info:
+            return 4
+        case .warning, .error:
+            return nil
+        }
     }
 }

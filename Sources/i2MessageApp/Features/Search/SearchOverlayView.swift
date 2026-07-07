@@ -9,7 +9,7 @@ struct SearchOverlayView: View {
     @State private var debounceTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack {
             Color.black.opacity(0.16)
                 .ignoresSafeArea()
                 .onTapGesture {
@@ -30,7 +30,7 @@ struct SearchOverlayView: View {
                     .stroke(I2Palette.separator, lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.22), radius: 26, y: 18)
-            .padding(.top, 84)
+            .offset(y: -40)
         }
         .onAppear {
             searchFocused = true
@@ -103,8 +103,25 @@ struct SearchOverlayView: View {
         .padding(.vertical, 13)
     }
 
-    @ViewBuilder
     private var resultsList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                if !model.searchContactMatches.isEmpty {
+                    OverlaySectionHeader(title: "Contacts")
+                    ForEach(model.searchContactMatches) { contact in
+                        OverlayContactRow(contact: contact)
+                    }
+                }
+
+                messagesSection
+            }
+            .padding(8)
+        }
+        .frame(maxHeight: 420)
+    }
+
+    @ViewBuilder
+    private var messagesSection: some View {
         switch model.searchPhase {
         case .loading:
             HStack(spacing: 8) {
@@ -114,33 +131,31 @@ struct SearchOverlayView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .padding(16)
+            .padding(12)
         case .empty:
-            Text("No matches. Try fewer words or semantic search.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(16)
+            if model.searchContactMatches.isEmpty {
+                Text("No matches. Try fewer words or semantic search.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
         case .failed(let message):
             Text(message)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(16)
+                .padding(12)
         case .idle, .loaded:
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    if model.searchMode == .semantic {
-                        ForEach(model.semanticSnippets.prefix(12)) { snippet in
-                            OverlaySnippetRow(snippet: snippet)
-                        }
-                    } else {
-                        ForEach(model.exactSearchResults.prefix(12)) { result in
-                            OverlayResultRow(result: result)
-                        }
-                    }
+            if model.searchMode == .semantic, !model.semanticSnippets.isEmpty {
+                OverlaySectionHeader(title: "Messages")
+                ForEach(model.semanticSnippets.prefix(12)) { snippet in
+                    OverlaySnippetRow(snippet: snippet)
                 }
-                .padding(8)
+            } else if !model.exactSearchResults.isEmpty {
+                OverlaySectionHeader(title: "Messages")
+                ForEach(model.exactSearchResults.prefix(12)) { result in
+                    OverlayResultRow(result: result)
+                }
             }
-            .frame(maxHeight: 380)
         }
     }
 
@@ -157,6 +172,60 @@ struct SearchOverlayView: View {
             guard !Task.isCancelled else { return }
             await model.performSearch(reset: true)
         }
+    }
+}
+
+private struct OverlaySectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 11)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+    }
+}
+
+private struct OverlayContactRow: View {
+    @EnvironmentObject private var model: AppViewModel
+    let contact: Contact
+
+    var body: some View {
+        Button {
+            Task { await model.openSearchContact(contact) }
+        } label: {
+            HStack(spacing: 11) {
+                AvatarView(contact: contact, size: 28)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(contact.displayName)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if let handle = contact.handles.first {
+                        Text(handle.value)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                Image(systemName: "arrow.forward")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(RowHighlightButtonStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Open chat with \(contact.displayName)")
     }
 }
 
