@@ -41,6 +41,45 @@ final class MessageBodyDecoderTests: XCTestCase {
         XCTAssertNil(MessageBodyDecoder.plainText(fromAttributedBody: truncated))
     }
 
+    func testEditHistoryDecodesCraftedSummaryInfo() throws {
+        let plist: [String: Any] = [
+            "ec": [
+                "0": [
+                    ["d": 700_000_000.0, "t": typedstreamBlob(for: "first draft")],
+                    ["d": 700_000_100.0, "t": typedstreamBlob(for: "final wording")],
+                ]
+            ]
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+
+        let versions = MessageBodyDecoder.editHistory(fromSummaryInfo: data)
+
+        XCTAssertEqual(versions.map(\.text), ["first draft", "final wording"])
+        XCTAssertLessThan(versions[0].editedAt, versions[1].editedAt)
+    }
+
+    func testEditHistoryDecodesRealChatDBSummaryInfo() throws {
+        // Captured verbatim from a macOS 26.3 chat.db `message_summary_info`
+        // for a once-edited message (two versions in the "ec" chain).
+        let data = try XCTUnwrap(Data(base64Encoded: Self.realSummaryInfoBase64))
+
+        let versions = MessageBodyDecoder.editHistory(fromSummaryInfo: data)
+
+        XCTAssertEqual(versions.count, 2)
+        XCTAssertEqual(
+            versions.first?.text,
+            "you can just let it know Libra is a vendor and i completely trust them. we have verified and audited them"
+        )
+        XCTAssertTrue(versions[1].text.hasSuffix("there is nothing to worry about here."))
+        XCTAssertLessThan(versions[0].editedAt, versions[1].editedAt)
+    }
+
+    func testEditHistoryToleratesMissingOrMalformedSummaryInfo() {
+        XCTAssertEqual(MessageBodyDecoder.editHistory(fromSummaryInfo: nil), [])
+        XCTAssertEqual(MessageBodyDecoder.editHistory(fromSummaryInfo: Data()), [])
+        XCTAssertEqual(MessageBodyDecoder.editHistory(fromSummaryInfo: Data([0x00, 0x01, 0x02])), [])
+    }
+
     /// Builds the minimal byte layout the decoder walks: preamble, "NSString"
     /// class name, 5 bookkeeping bytes, then a length-prefixed UTF-8 payload.
     private func typedstreamBlob(for text: String) -> Data {
@@ -65,4 +104,18 @@ final class MessageBodyDecoderTests: XCTestCase {
         data.append(contentsOf: [0x86, 0x84])
         return data
     }
+
+    private static let realSummaryInfoBase64 = """
+        YnBsaXN0MDDWAQIDBAUGBwgTFBYXU2VuY1JlY1N1c3RSZXBVZW9nY2RTb3RyCNEJClEwogsQ0gwNDg9RdFFkTxEBGAQLc3RyZWFtdHlwZW\
+        SB6AOEAUCEhIQSTlNBdHRyaWJ1dGVkU3RyaW5nAISECE5TT2JqZWN0AIWShISECE5TU3RyaW5nAZSEAStpeW91IGNhbiBqdXN0IGxldCBp\
+        dCBrbm93IExpYnJhIGlzIGEgdmVuZG9yIGFuZCBpIGNvbXBsZXRlbHkgdHJ1c3QgdGhlbS4gd2UgaGF2ZSB2ZXJpZmllZCBhbmQgYXVkaX\
+        RlZCB0aGVthoQCaUkBaZKEhIQMTlNEaWN0aW9uYXJ5AJSEAWkBkoSWlh1fX2tJTU1lc3NhZ2VQYXJ0QXR0cmlidXRlTmFtZYaShISECE5T\
+        TnVtYmVyAISEB05TVmFsdWUAlIQBKoSZmQCGhoYjQcf+25ySsCDSDA0REk8RAV8EC3N0cmVhbXR5cGVkgegDhAFAhISEEk5TQXR0cmlidX\
+        RlZFN0cmluZwCEhAhOU09iamVjdACFkoSEhAhOU1N0cmluZwGUhAErgawAeW91IGNhbiBqdXN0IGxldCBpdCBrbm93IExpYnJhIGlzIGEg\
+        dmVuZG9yIGFuZCBpIGNvbXBsZXRlbHkgdHJ1c3QgdGhlbS4gd2UgaGF2ZSB2ZXJpZmllZCBhbmQgYXVkaXRlZCB0aGVtLiBwbGVhc2UgZ2\
+        8gYWhlYWQgYW5kIGRvIGl0LiB0aGVyZSBpcyBub3RoaW5nIHRvIHdvcnJ5IGFib3V0IGhlcmUuIIaEAmlJAYGsAJKEhIQMTlNEaWN0aW9u\
+        YXJ5AJSEAWkBkoSWlh1fX2tJTU1lc3NhZ2VQYXJ0QXR0cmlidXRlTmFtZYaShISECE5TTnVtYmVyAISEB05TVmFsdWUAlIQBKoSZmQCGho\
+        YjQcf+26KuQ7MJoRUQABAB0QkY0hkaFRtSbG9SbGUQaQAIABUAGQAcACAAIwApAC0ALgAxADMANgA7AD0APwFbAWQBaQLMAtUC1gLYAtoC\
+        3ALfAuQC5wLqAAAAAAAAAgEAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAuw=
+        """
 }

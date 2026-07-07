@@ -555,12 +555,15 @@ struct DraftAttachmentChip: View {
 
 struct ReactionCluster: View {
     let reactions: [MessageReaction]
+    /// Resolves a reaction sender to a display name for the hover tooltip.
+    var senderName: ((ContactID) -> String)?
 
     private struct ReactionGroup: Identifiable {
         var id: String
         var emoji: String
         var count: Int
         var title: String
+        var senderIDs: [ContactID]
     }
 
     private var groups: [ReactionGroup] {
@@ -569,18 +572,28 @@ struct ReactionCluster: View {
             let emoji = ReactionCluster.emoji(for: reaction.kind, displayText: reaction.displayText)
             if let index = ordered.firstIndex(where: { $0.emoji == emoji }) {
                 ordered[index].count += 1
+                ordered[index].senderIDs.append(reaction.senderID)
             } else {
                 ordered.append(
                     ReactionGroup(
                         id: emoji,
                         emoji: emoji,
                         count: 1,
-                        title: ReactionCluster.title(for: reaction.kind)
+                        title: ReactionCluster.title(for: reaction.kind),
+                        senderIDs: [reaction.senderID]
                     )
                 )
             }
         }
         return ordered
+    }
+
+    private func tooltip(for group: ReactionGroup) -> String {
+        guard let senderName else {
+            return "\(group.count) \(group.title)"
+        }
+        let names = group.senderIDs.map(senderName)
+        return "\(group.title) — \(names.joined(separator: ", "))"
     }
 
     var body: some View {
@@ -603,7 +616,8 @@ struct ReactionCluster: View {
                     Capsule().stroke(I2Palette.separator, lineWidth: 1)
                 }
                 .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-                .accessibilityLabel("\(group.count) \(group.title)")
+                .help(tooltip(for: group))
+                .accessibilityLabel(tooltip(for: group))
             }
         }
         .accessibilityElement(children: .combine)

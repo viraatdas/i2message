@@ -77,4 +77,38 @@ enum MessageBodyDecoder {
         }
         return plainText(fromAttributedBody: attributedBody)
     }
+
+    /// Decodes the edit chain from `message_summary_info`: a binary plist whose
+    /// "ec" key maps part index → array of versions, each `{d:` Cocoa reference
+    /// timestamp`, t:` typedstream NSAttributedString`}`. Every recorded
+    /// version is returned oldest-first, including the entry matching the
+    /// current text (callers trim it).
+    static func editHistory(fromSummaryInfo data: Data?) -> [MessageEditVersion] {
+        guard let data, !data.isEmpty,
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let info = plist as? [String: Any],
+              let editedParts = info["ec"] as? [String: Any]
+        else {
+            return []
+        }
+
+        var versions: [MessageEditVersion] = []
+        for key in editedParts.keys.sorted() {
+            guard let entries = editedParts[key] as? [[String: Any]] else {
+                continue
+            }
+            for entry in entries {
+                guard let blob = entry["t"] as? Data,
+                      let text = plainText(fromAttributedBody: blob)
+                else {
+                    continue
+                }
+                let timestamp = (entry["d"] as? Double) ?? 0
+                versions.append(
+                    MessageEditVersion(text: text, editedAt: Date(timeIntervalSinceReferenceDate: timestamp))
+                )
+            }
+        }
+        return versions.sorted { $0.editedAt < $1.editedAt }
+    }
 }

@@ -28,8 +28,8 @@ final class MessagesDataAccessTests: XCTestCase {
         XCTAssertEqual(direct.title, "+1 (555) 123-0001")
         XCTAssertEqual(direct.participants.count, 1)
         XCTAssertEqual(direct.unreadCount, 1)
-        XCTAssertEqual(direct.lastMessage?.text, "Here is the file")
-        XCTAssertEqual(direct.lastMessage?.hasAttachments, true)
+        XCTAssertEqual(direct.lastMessage?.text, "React to me")
+        XCTAssertEqual(direct.lastMessage?.hasAttachments, false)
         XCTAssertEqual(direct.pinnedRank, 0)
 
         let group = try XCTUnwrap(page.items.first { $0.id == ConversationID(rawValue: "chat:2") })
@@ -64,9 +64,12 @@ final class MessagesDataAccessTests: XCTestCase {
             around: nil
         )
 
-        XCTAssertEqual(page.items.map(\.id), [MessageID(rawValue: "message:2"), MessageID(rawValue: "message:1")])
+        XCTAssertEqual(
+            page.items.map(\.id),
+            [MessageID(rawValue: "message:5"), MessageID(rawValue: "message:2"), MessageID(rawValue: "message:1")]
+        )
 
-        let outgoing = try XCTUnwrap(page.items.first)
+        let outgoing = page.items[1]
         XCTAssertEqual(outgoing.body.plainText, "Here is the file")
         XCTAssertEqual(outgoing.direction, .outgoing)
         XCTAssertEqual(outgoing.status, .delivered)
@@ -75,10 +78,51 @@ final class MessagesDataAccessTests: XCTestCase {
         XCTAssertEqual(outgoing.attachments.first?.kind, .image)
         XCTAssertEqual(outgoing.reactions.map(\.kind), [.liked])
 
-        let incoming = page.items[1]
+        let incoming = page.items[2]
         XCTAssertEqual(incoming.direction, .incoming)
         XCTAssertEqual(incoming.status, .delivered)
         XCTAssertEqual(incoming.senderID, ContactID(rawValue: "handle:1"))
+    }
+
+    func testTapbackLifecycleAppliesRemovalsPrefixesAndCustomEmoji() async throws {
+        let databaseURL = try SyntheticMessagesDatabase.makeSmallDatabase()
+        let stack = makeStack(databaseURL: databaseURL)
+        let page = try await stack.messages.messages(
+            in: ConversationID(rawValue: "chat:1"),
+            page: PageRequest(limit: 10),
+            around: nil
+        )
+
+        let target = try XCTUnwrap(page.items.first { $0.id == MessageID(rawValue: "message:5") })
+
+        // The "bp:"-addressed love (2000) was cancelled by its removal (3000);
+        // only the custom-emoji tapback survives, carrying the emoji column.
+        XCTAssertEqual(target.reactions.map(\.kind), [.custom])
+        XCTAssertEqual(target.reactions.first?.displayText, "🫡")
+
+        // Tapback and removal rows never appear as transcript messages.
+        XCTAssertFalse(page.items.contains { $0.id == MessageID(rawValue: "message:6") })
+        XCTAssertFalse(page.items.contains { $0.id == MessageID(rawValue: "message:8") })
+
+        // Outgoing read receipt surfaces the actual read timestamp.
+        XCTAssertEqual(target.status, .read)
+        XCTAssertNotNil(target.readAt)
+        XCTAssertNotNil(target.deliveredAt)
+    }
+
+    func testEditedMessageWithoutTextOrEditChainLoadsSafely() async throws {
+        let databaseURL = try SyntheticMessagesDatabase.makeSmallDatabase()
+        let stack = makeStack(databaseURL: databaseURL)
+        let page = try await stack.messages.messages(
+            in: ConversationID(rawValue: "chat:2"),
+            page: PageRequest(limit: 10),
+            around: nil
+        )
+
+        let edited = try XCTUnwrap(page.items.first { $0.id == MessageID(rawValue: "message:9") })
+        XCTAssertTrue(edited.isEdited)
+        XCTAssertTrue(edited.editHistory.isEmpty)
+        XCTAssertEqual(edited.body.plainText, "")
     }
 
     func testMessagePaginationUsesStableOlderAndNewerCursors() async throws {
@@ -90,7 +134,7 @@ final class MessagesDataAccessTests: XCTestCase {
             page: PageRequest(limit: 1),
             around: nil
         )
-        XCTAssertEqual(newestPage.items.map(\.id), [MessageID(rawValue: "message:2")])
+        XCTAssertEqual(newestPage.items.map(\.id), [MessageID(rawValue: "message:5")])
         XCTAssertTrue(newestPage.hasMore)
 
         let olderPage = try await stack.messages.messages(
@@ -98,14 +142,14 @@ final class MessagesDataAccessTests: XCTestCase {
             page: PageRequest(cursor: newestPage.nextCursor, limit: 1, direction: .older),
             around: nil
         )
-        XCTAssertEqual(olderPage.items.map(\.id), [MessageID(rawValue: "message:1")])
+        XCTAssertEqual(olderPage.items.map(\.id), [MessageID(rawValue: "message:2")])
 
         let newerPage = try await stack.messages.messages(
             in: ConversationID(rawValue: "chat:1"),
             page: PageRequest(cursor: olderPage.previousCursor, limit: 1, direction: .newer),
             around: nil
         )
-        XCTAssertEqual(newerPage.items.map(\.id), [MessageID(rawValue: "message:2")])
+        XCTAssertEqual(newerPage.items.map(\.id), [MessageID(rawValue: "message:5")])
     }
 
     func testAttachmentRepositoryLoadsByMessageAndID() async throws {

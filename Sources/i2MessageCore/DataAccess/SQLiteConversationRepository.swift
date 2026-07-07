@@ -152,7 +152,8 @@ public actor SQLiteConversationRepository: ConversationRepository {
                     )
                 },
                 updatedAt: MessagesDateConverter.stableDate(from: record.sortDateRaw, fallbackRowID: record.rowID),
-                lastReadMessageID: nil
+                lastReadMessageID: nil,
+                chatGUID: record.guid
             )
         }
     }
@@ -405,7 +406,7 @@ public actor SQLiteConversationRepository: ConversationRepository {
             return "1 = 1"
         }
 
-        return "COALESCE(\(messageAlias).associated_message_type, 0) NOT BETWEEN 2000 AND 2999"
+        return "COALESCE(\(messageAlias).associated_message_type, 0) < 2000"
     }
 
     private static func unreadCountSubquery(schema: MessagesDatabaseSchema) -> String {

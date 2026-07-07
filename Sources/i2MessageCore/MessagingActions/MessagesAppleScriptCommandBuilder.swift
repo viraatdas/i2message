@@ -32,6 +32,13 @@ public enum MessagesAppleScriptCommandBuilder {
             )
         }
 
+        // Addressing an existing chat by GUID reaches group chats a single buddy
+        // handle can't. The modern `chat` class accepts chat.db GUIDs directly
+        // (the legacy `text chat` class does not).
+        if case .existingChat(let guid) = draft.target {
+            return try chatSendCommand(guid: guid, text: text, attachments: draft.attachments)
+        }
+
         let handles = try automationHandles(for: draft.target)
         guard policy.allowsDirectGroupAutomation || handles.count == 1 else {
             throw MessagingActionError.unsupportedCapability(
@@ -44,7 +51,7 @@ public enum MessagesAppleScriptCommandBuilder {
         let service = draft.requestedService ?? handles.first?.service ?? .iMessage
         try validateService(service, policy: policy)
 
-        let recipient = handles[0].normalizedValue.isEmpty ? handles[0].value : handles[0].normalizedValue
+        let recipient = dialableRecipient(for: handles[0])
         guard !recipient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MessagingActionError.recipientNotReachable(
                 service: service,
@@ -75,8 +82,49 @@ public enum MessagesAppleScriptCommandBuilder {
         )
     }
 
+    private static func chatSendCommand(
+        guid: String,
+        text: String,
+        attachments: [DraftAttachment]
+    ) throws -> MessagesAppleScriptCommand {
+        let trimmedGUID = guid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedGUID.isEmpty else {
+            throw MessagingActionError.validationFailed(
+                field: "chat",
+                reason: "The conversation is missing a Messages chat identifier."
+            )
+        }
+
+        var lines = [
+            "tell application \"Messages\"",
+            "    set targetChat to chat id \(appleScriptString(trimmedGUID))"
+        ]
+
+        if !text.isEmpty {
+            lines.append("    send \(appleScriptString(text)) to targetChat")
+        }
+
+        for attachment in attachments {
+            lines.append("    send POSIX file \(appleScriptString(attachment.fileURL.path)) to targetChat")
+        }
+
+        lines.append("end tell")
+
+        let attachmentSummary = attachments.isEmpty ? "no attachments" : "\(attachments.count) attachment(s)"
+        return MessagesAppleScriptCommand(
+            source: lines.joined(separator: "\n"),
+            redactedDescription: "Send message to existing chat, \(attachmentSummary)"
+        )
+    }
+
     public static func automationHandles(for target: SendTarget) throws -> [ContactHandle] {
         switch target {
+        case .existingChat:
+            throw MessagingActionError.unsupportedCapability(
+                kind: .sendMessage,
+                reason: "An existing-chat GUID target is addressed directly, not resolved to handles.",
+                fallback: "Send to the chat GUID."
+            )
         case .handles(let handles):
             let usableHandles = handles.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             guard !usableHandles.isEmpty else {
@@ -110,6 +158,24 @@ public enum MessagesAppleScriptCommandBuilder {
                     fallback: "Open Messages.app with the draft on the pasteboard, then send from Apple's UI."
                 )
             }
+        }
+    }
+
+    /// The address Messages should send to. Uses the original handle string
+    /// (not the normalized matching key, which strips the country code) and
+    /// collapses phone numbers to a clean `+digits` form Messages can dial.
+    private static func dialableRecipient(for handle: ContactHandle) -> String {
+        let value = handle.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = value.isEmpty ? handle.normalizedValue : value
+
+        switch handle.kind {
+        case .emailAddress:
+            return source
+        case .phoneNumber, .unknown:
+            if source.contains("@") { return source }
+            let digits = source.filter(\.isNumber)
+            guard !digits.isEmpty else { return source }
+            return source.hasPrefix("+") ? "+" + digits : digits
         }
     }
 

@@ -44,6 +44,15 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var newMessageSuggestions: [Contact] = []
     @Published private(set) var pendingNewConversation: PendingNewConversation?
 
+    /// Slack-style thread pane: when a message with replies is opened, this
+    /// docks the parent + its replies on the right of the transcript.
+    @Published var isThreadPanelPresented = false
+    @Published var threadRootID: MessageID?
+    @Published var threadDraftText = ""
+    /// Reply count each thread was last seen at, so new replies can surface a
+    /// quiet "new activity" dot instead of a full message in the main chat.
+    @Published private var threadSeenReplyCount: [MessageID: Int] = [:]
+
     @Published var isInfoPanelPresented = false
     @Published private(set) var infoPanelPhase: UIContentPhase = .idle
     @Published private(set) var infoPanelMedia: [MessageAttachment] = []
@@ -251,6 +260,11 @@ final class AppViewModel: ObservableObject {
         } else if selectedConversationID == nil {
             selectedConversationID = conversations.first?.id
         }
+        // The conversation on screen is being read; clear its badge like an
+        // explicit selection would.
+        if let selectedConversationID {
+            markConversationRead(selectedConversationID)
+        }
         await loadSelectedConversation(reset: true)
     }
 
@@ -302,6 +316,9 @@ final class AppViewModel: ObservableObject {
         sidebarDestination = .conversations
         if let pending = pendingNewConversation, pending.conversation.id != id {
             pendingNewConversation = nil
+        }
+        if selectedConversationID != id {
+            closeThread()
         }
         selectedConversationID = id
         markConversationRead(id)
@@ -722,6 +739,27 @@ final class AppViewModel: ObservableObject {
         await selectConversation(visible[nextIndex].id)
     }
 
+    /// Jumps straight to the Nth conversation in the sidebar (⌘1…⌘9, ⌘0 → 10th).
+    /// No-op when the list is shorter than the requested slot.
+    func selectConversation(atIndex index: Int) async {
+        let visible = filteredConversations
+        guard index >= 0, index < visible.count else { return }
+        await selectConversation(visible[index].id)
+    }
+
+    /// Browser-style ⌃Tab / ⌃⇧Tab cycling: wraps around the ends instead of
+    /// clamping the way the up/down arrows do.
+    func cycleConversation(offset: Int) async {
+        let visible = filteredConversations
+        guard !visible.isEmpty else { return }
+        let currentIndex = selectedConversationID.flatMap { id in
+            visible.firstIndex { $0.id == id }
+        } ?? 0
+        let count = visible.count
+        let nextIndex = ((currentIndex + offset) % count + count) % count
+        await selectConversation(visible[nextIndex].id)
+    }
+
     func loadSelectedConversation(reset: Bool) async {
         guard let selectedConversationID else {
             return
@@ -785,6 +823,9 @@ final class AppViewModel: ObservableObject {
             nextState.phase = nextState.messages.isEmpty ? .empty : .loaded
             nextState.errorMessage = nil
             transcriptPages[conversationID] = nextState
+            if conversationID == selectedConversationID {
+                reconcileThreadBaselines()
+            }
         } catch {
             AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
             if dependencies.seed.messagesByConversation[conversationID] != nil {
@@ -962,23 +1003,65 @@ final class AppViewModel: ObservableObject {
         transcriptPages[message.conversationID] = state
     }
 
+    /// Resolves a conversation to a direct Messages Automation target. The
+    /// modern Messages `chat` class accepts chat.db GUIDs, so any conversation
+    /// with a GUID (1:1 or group) is addressed exactly; conversations without
+    /// one fall back to a 1:1 buddy-handle send, then to handoff.
+    private func directAutomationTarget(for conversationID: ConversationID) -> SendTarget? {
+        let conversation = selectedConversation?.id == conversationID
+            ? selectedConversation
+            : conversations.first(where: { $0.id == conversationID })
+        guard let conversation else { return nil }
+
+        // Prefer the chat GUID: `chat id "<guid>"` addresses the exact existing
+        // thread without re-resolving handles or risking a new conversation on
+        // a different service.
+        if let guid = conversation.chatGUID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !guid.isEmpty {
+            return .existingChat(guid: guid)
+        }
+        // Fallback for conversations without a GUID: 1:1 buddy send.
+        let others = conversation.participants.filter { !$0.isCurrentUser }
+        if others.count == 1,
+           let handle = others.first?.handles.first(where: {
+               !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+           }) {
+            return .handles([handle])
+        }
+        return nil
+    }
+
     func sendCurrentDraft() async {
         guard let selectedConversationID else {
             return
         }
         let replyTargetID = replyTargets[selectedConversationID]
         let isPending = pendingNewConversation?.conversation.id == selectedConversationID
-        let target: SendTarget
-        if let pending = pendingNewConversation, isPending {
-            target = .handles(pending.handles)
-        } else {
-            target = .existingConversation(selectedConversationID)
-        }
+
+        // Local echo keeps the conversation id + reply anchor so the transcript
+        // threads the message correctly.
+        let localTarget: SendTarget = isPending
+            ? .handles(pendingNewConversation?.handles ?? [])
+            : .existingConversation(selectedConversationID)
         let draft = MessageDraft(
-            target: target,
+            target: localTarget,
             text: currentDraftText,
             attachments: currentDraftAttachments,
             replyToMessageID: isPending ? nil : replyTargetID,
+            requestedService: selectedConversation?.service
+        )
+
+        // Actual send resolves a real handle for one-to-one chats (so AppleScript
+        // can deliver it) and drops the reply anchor, which Messages Automation
+        // can't attach to a specific bubble.
+        let sendTarget: SendTarget = isPending
+            ? localTarget
+            : (directAutomationTarget(for: selectedConversationID) ?? localTarget)
+        let sendableDraft = MessageDraft(
+            target: sendTarget,
+            text: currentDraftText,
+            attachments: currentDraftAttachments,
+            replyToMessageID: nil,
             requestedService: selectedConversation?.service
         )
 
@@ -986,13 +1069,8 @@ final class AppViewModel: ObservableObject {
             if dependencies.isLiveData {
                 await ensureAutomationPermission()
             }
-            sendOperation = try await dependencies.messageSender.validate(draft)
-            let receipt: SendReceipt
-            if let replyTargetID, let actions = dependencies.messagingActions {
-                receipt = try await actions.reply(draft, to: replyTargetID)
-            } else {
-                receipt = try await dependencies.messageSender.send(draft)
-            }
+            sendOperation = try await dependencies.messageSender.validate(sendableDraft)
+            let receipt = try await dependencies.messageSender.send(sendableDraft)
             AppDiagnostics.operation("send_message", state: "accepted")
             if !isPending {
                 appendSentMessage(receipt: receipt, draft: draft)
@@ -1012,13 +1090,15 @@ final class AppViewModel: ObservableObject {
             } else if dependencies.isLiveData {
                 scheduleTranscriptReload()
             }
-            showBanner(
-                tone: .success,
-                title: dependencies.isLiveData ? "Message sent" : "Message queued",
-                message: dependencies.isLiveData
-                    ? "Messages.app accepted the send. The transcript will refresh from the read-only store."
-                    : "Fixture send used the shared sending contract."
-            )
+            // Live sends confirm themselves: the message appears in the
+            // transcript. A banner would just cover the conversation.
+            if !dependencies.isLiveData {
+                showBanner(
+                    tone: .success,
+                    title: "Message queued",
+                    message: "Fixture send used the shared sending contract."
+                )
+            }
         } catch {
             AppDiagnostics.failure("send_message", category: String(describing: type(of: error)))
             sendOperation = SendOperation(
@@ -1365,6 +1445,161 @@ final class AppViewModel: ObservableObject {
         return contact(for: id)?.displayName ?? "Unknown"
     }
 
+    /// Direction-aware sender label. Outgoing messages carry no sender handle in
+    /// chat.db, so resolve those to "You" instead of falling through to "System".
+    func senderName(for message: Message) -> String {
+        if message.direction == .outgoing {
+            return "You"
+        }
+        return senderName(for: message.senderID)
+    }
+
+    // MARK: - Threads
+
+    /// Direct replies to `message` within the loaded transcript, oldest first.
+    /// iMessage stores every reply against the thread originator, so a thread is
+    /// simply a root message plus the messages that point back to it.
+    func threadReplies(to messageID: MessageID) -> [Message] {
+        selectedMessages
+            .filter { $0.replyToMessageID == messageID }
+            .sorted { $0.sentAt < $1.sentAt }
+    }
+
+    func threadReplyCount(for message: Message) -> Int {
+        threadReplyCount(forRoot: message.id)
+    }
+
+    func threadReplyCount(forRoot rootID: MessageID) -> Int {
+        selectedMessages.reduce(into: 0) { count, message in
+            if message.replyToMessageID == rootID { count += 1 }
+        }
+    }
+
+    /// A message anchors a thread when at least one other message replies to it.
+    func isThreadRoot(_ message: Message) -> Bool {
+        message.replyToMessageID == nil && threadReplyCount(for: message) > 0
+    }
+
+    /// Main-transcript messages with thread replies folded away — a reply is
+    /// hidden when its root is also loaded, so new thread activity shows up as a
+    /// quiet indicator on the root instead of a fresh bubble in the channel.
+    var visibleTranscriptMessages: [Message] {
+        let loadedIDs = Set(selectedMessages.map(\.id))
+        return selectedMessages.filter { message in
+            guard let parent = message.replyToMessageID else { return true }
+            return !loadedIDs.contains(parent)
+        }
+    }
+
+    /// True when a thread has picked up replies since the user last opened it.
+    func hasUnseenThreadReplies(_ message: Message) -> Bool {
+        guard isThreadRoot(message) else { return false }
+        let current = threadReplyCount(for: message)
+        guard let seen = threadSeenReplyCount[message.id] else { return false }
+        return current > seen
+    }
+
+    /// Baselines existing threads as "seen" on first sighting so only genuinely
+    /// new replies (arriving on a later refresh) light up the indicator.
+    private func reconcileThreadBaselines() {
+        for message in selectedMessages where isThreadRoot(message) {
+            if threadSeenReplyCount[message.id] == nil {
+                threadSeenReplyCount[message.id] = threadReplyCount(for: message)
+            }
+        }
+    }
+
+    /// The full thread (root first, then replies oldest→newest) for the pane.
+    var threadPanelMessages: [Message] {
+        guard let threadRootID,
+              let root = selectedMessages.first(where: { $0.id == threadRootID }) else {
+            return []
+        }
+        return [root] + threadReplies(to: threadRootID)
+    }
+
+    var threadPanelRoot: Message? {
+        guard let threadRootID else { return nil }
+        return selectedMessages.first { $0.id == threadRootID }
+    }
+
+    func openThread(rootID: MessageID) {
+        threadRootID = rootID
+        isThreadPanelPresented = true
+        threadDraftText = ""
+        // Opening the thread clears its "new activity" state.
+        threadSeenReplyCount[rootID] = threadReplyCount(forRoot: rootID)
+    }
+
+    /// Opens the thread a given message belongs to — its root if it's a reply,
+    /// or itself if it already anchors a thread.
+    func openThread(for message: Message) {
+        let root = message.replyToMessageID ?? message.id
+        openThread(rootID: root)
+    }
+
+    func closeThread() {
+        isThreadPanelPresented = false
+        threadRootID = nil
+        threadDraftText = ""
+    }
+
+    var canSendThreadReply: Bool {
+        threadRootID != nil
+            && !threadDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Sends a reply into the open thread (root as the reply target) and keeps
+    /// the composer inside the pane so the conversation stays threaded.
+    func sendThreadReply() async {
+        guard let selectedConversationID,
+              let rootID = threadRootID,
+              canSendThreadReply else {
+            return
+        }
+        // Local echo carries the reply anchor so the pane threads it; the actual
+        // send resolves a real handle (1:1) and drops the anchor.
+        let draft = MessageDraft(
+            target: .existingConversation(selectedConversationID),
+            text: threadDraftText,
+            attachments: [],
+            replyToMessageID: rootID,
+            requestedService: selectedConversation?.service
+        )
+        let sendableDraft = MessageDraft(
+            target: directAutomationTarget(for: selectedConversationID) ?? .existingConversation(selectedConversationID),
+            text: threadDraftText,
+            attachments: [],
+            replyToMessageID: nil,
+            requestedService: selectedConversation?.service
+        )
+
+        do {
+            if dependencies.isLiveData {
+                await ensureAutomationPermission()
+            }
+            sendOperation = try await dependencies.messageSender.validate(sendableDraft)
+            let receipt = try await dependencies.messageSender.send(sendableDraft)
+            AppDiagnostics.operation("send_thread_reply", state: "accepted")
+            appendSentMessage(receipt: receipt, draft: draft)
+            threadDraftText = ""
+            sendOperation = nil
+            threadSeenReplyCount[rootID] = threadReplyCount(forRoot: rootID)
+            try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
+            if dependencies.isLiveData {
+                scheduleTranscriptReload()
+            }
+        } catch {
+            AppDiagnostics.failure("send_thread_reply", category: String(describing: type(of: error)))
+            sendOperation = nil
+            showBanner(
+                tone: .error,
+                title: "Could not send reply",
+                message: userFacingMessage(for: error)
+            )
+        }
+    }
+
     func contact(for id: ContactID?) -> Contact? {
         guard let id else {
             return nil
@@ -1449,6 +1684,7 @@ final class AppViewModel: ObservableObject {
                             self.highlightedMessageID = nil
                         }
                     }
+                    await self?.refreshSelectedTranscriptTail()
                     try? await indexer.invalidateIndex(for: nil)
                     await MainActor.run { [weak self] in
                         self?.startBackgroundIndexingIfNeeded()
@@ -1530,10 +1766,74 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// After a live send, fold the store's real row into the transcript once
+    /// Messages has written it. Tail-merging (instead of a reset reload) keeps
+    /// the scroll position and avoids a visible loading flash.
     private func scheduleTranscriptReload() {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            await self?.loadSelectedConversation(reset: true)
+            await self?.refreshSelectedTranscriptTail()
+        }
+    }
+
+    /// Merges the newest page of the selected conversation into the transcript
+    /// tail when chat.db changes, without discarding already-loaded older pages —
+    /// live arrivals (and tapback/edit/read-receipt changes on recent messages)
+    /// appear without disturbing the reading position or pagination.
+    func refreshSelectedTranscriptTail() async {
+        guard dependencies.isLiveData, let conversationID = selectedConversationID else {
+            return
+        }
+        let state = transcriptPages[conversationID] ?? .empty
+        guard state.phase == .loaded, !state.usesFixtureData else {
+            return
+        }
+
+        do {
+            let page = try await dependencies.messageRepository.messages(
+                in: conversationID,
+                page: PageRequest(limit: max(settings.pageSize, 20)),
+                around: nil
+            )
+            let fresh = page.items.sorted { $0.sentAt < $1.sentAt }
+            guard let oldestFresh = fresh.first else {
+                return
+            }
+            guard conversationID == selectedConversationID else {
+                return
+            }
+            var next = transcriptPages[conversationID] ?? .empty
+            let freshIDs = Set(fresh.map(\.id))
+            // Keep loaded history strictly older than the fresh window. Local
+            // send echoes newer than the window are kept until the store's real
+            // row appears (matched by direction + text), then dropped so they
+            // don't duplicate.
+            var retainedOlder: [Message] = []
+            var retainedNewer: [Message] = []
+            for message in next.messages {
+                if freshIDs.contains(message.id) {
+                    continue
+                }
+                if message.sentAt < oldestFresh.sentAt {
+                    retainedOlder.append(message)
+                } else if !fresh.contains(where: {
+                    $0.direction == message.direction && $0.body.plainText == message.body.plainText
+                }) {
+                    retainedNewer.append(message)
+                }
+            }
+            let merged = retainedOlder + fresh + retainedNewer
+            guard merged != next.messages else {
+                return
+            }
+            next.messages = merged
+            next.phase = .loaded
+            next.errorMessage = nil
+            transcriptPages[conversationID] = next
+            reconcileThreadBaselines()
+        } catch {
+            // Background refresh: keep the current transcript on failure.
+            AppDiagnostics.failure("refresh_transcript_tail", category: String(describing: type(of: error)))
         }
     }
 

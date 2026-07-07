@@ -85,6 +85,7 @@ enum SyntheticMessagesDatabase {
                 cache_has_attachments INTEGER,
                 associated_message_guid TEXT,
                 associated_message_type INTEGER,
+                associated_message_emoji TEXT,
                 thread_originator_guid TEXT
             )
             """
@@ -186,6 +187,81 @@ enum SyntheticMessagesDatabase {
             associatedType: 2001
         )
 
+        // Edited message with NO recoverable text or edit chain (attachment-only
+        // edit): regression guard for the removeLast-on-empty crash.
+        try insertMessage(
+            database,
+            rowID: 9,
+            chatID: 2,
+            guid: "msg-9-edited-no-text",
+            text: nil,
+            handleID: 2,
+            date: 700_000_000_000_000_009,
+            isFromMe: false,
+            isRead: true,
+            hasAttachments: false,
+            dateEdited: 700_000_000_000_000_010
+        )
+
+        // Message with the full tapback lifecycle: a loved tapback addressed via
+        // the "bp:" prefix, a custom-emoji tapback, then a removal of the love.
+        try insertMessage(
+            database,
+            rowID: 5,
+            chatID: 1,
+            guid: "msg-5",
+            text: "React to me",
+            handleID: nil,
+            date: 700_000_000_000_000_005,
+            isFromMe: true,
+            isRead: true,
+            hasAttachments: false,
+            dateRead: 700_000_000_000_000_055
+        )
+        try insertMessage(
+            database,
+            rowID: 6,
+            chatID: 1,
+            guid: "reaction-2",
+            text: nil,
+            handleID: 1,
+            date: 700_000_000_000_000_006,
+            isFromMe: false,
+            isRead: true,
+            hasAttachments: false,
+            associatedGUID: "bp:msg-5",
+            associatedType: 2000
+        )
+        try insertMessage(
+            database,
+            rowID: 7,
+            chatID: 1,
+            guid: "reaction-3",
+            text: nil,
+            handleID: 1,
+            date: 700_000_000_000_000_007,
+            isFromMe: false,
+            isRead: true,
+            hasAttachments: false,
+            associatedGUID: "p:0/msg-5",
+            associatedType: 2006,
+            associatedEmoji: "🫡"
+        )
+        try insertMessage(
+            database,
+            rowID: 8,
+            chatID: 1,
+            guid: "reaction-4",
+            text: nil,
+            handleID: 1,
+            date: 700_000_000_000_000_008,
+            isFromMe: false,
+            isRead: true,
+            hasAttachments: false,
+            associatedGUID: "bp:msg-5",
+            associatedType: 3000
+        )
+
         try database.execute(
             """
             INSERT INTO attachment (ROWID, guid, filename, uti, mime_type, transfer_name, total_bytes, width, height, duration)
@@ -238,14 +314,17 @@ enum SyntheticMessagesDatabase {
         isRead: Bool,
         hasAttachments: Bool,
         associatedGUID: String? = nil,
-        associatedType: Int? = nil
+        associatedType: Int? = nil,
+        associatedEmoji: String? = nil,
+        dateRead: Int64 = 0,
+        dateEdited: Int64 = 0
     ) throws {
         try database.execute(
             """
             INSERT INTO message (
                 ROWID, guid, text, handle_id, service, date, date_read, date_delivered, date_played,
                 date_edited, date_retracted, is_from_me, is_read, item_type, "error",
-                cache_has_attachments, associated_message_guid, associated_message_type, thread_originator_guid
+                cache_has_attachments, associated_message_guid, associated_message_type, associated_message_emoji, thread_originator_guid
             ) VALUES (
                 \(rowID),
                 \(guid.sqlLiteral),
@@ -253,10 +332,10 @@ enum SyntheticMessagesDatabase {
                 \(handleID.sqlLiteral),
                 'iMessage',
                 \(date),
-                0,
+                \(dateRead),
                 \(isFromMe ? date + 10 : 0),
                 0,
-                0,
+                \(dateEdited),
                 0,
                 \(isFromMe ? 1 : 0),
                 \(isRead ? 1 : 0),
@@ -265,6 +344,7 @@ enum SyntheticMessagesDatabase {
                 \(hasAttachments ? 1 : 0),
                 \(associatedGUID.sqlLiteral),
                 \(associatedType.sqlLiteral),
+                \(associatedEmoji.sqlLiteral),
                 NULL
             )
             """

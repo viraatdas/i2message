@@ -897,7 +897,7 @@ private struct MockMessageSender: MessageSending {
         switch draft.target {
         case .existingConversation(let id):
             conversationID = id
-        case .handles:
+        case .handles, .existingChat:
             conversationID = nil
         }
         return SendReceipt(

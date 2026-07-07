@@ -64,6 +64,18 @@ public struct MessageReaction: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+/// One prior version of an edited message, decoded from chat.db
+/// `message_summary_info` ("ec" edit chain).
+public struct MessageEditVersion: Codable, Hashable, Sendable {
+    public var text: String
+    public var editedAt: Date
+
+    public init(text: String, editedAt: Date) {
+        self.text = text
+        self.editedAt = editedAt
+    }
+}
+
 public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var id: MessageID
     public var conversationID: ConversationID
@@ -74,11 +86,18 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var status: MessageDeliveryStatus
     public var sentAt: Date
     public var receivedAt: Date?
+    /// When the recipient read an outgoing message (chat.db date_read).
+    public var readAt: Date?
+    /// When an outgoing message was delivered (chat.db date_delivered).
+    public var deliveredAt: Date?
     public var attachments: [MessageAttachment]
     public var reactions: [MessageReaction]
     public var replyToMessageID: MessageID?
     public var isEdited: Bool
     public var isDeleted: Bool
+    /// Prior versions of an edited message, oldest first (current text lives
+    /// in `body`). Empty when the message was never edited.
+    public var editHistory: [MessageEditVersion]
 
     public init(
         id: MessageID,
@@ -90,11 +109,14 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         status: MessageDeliveryStatus,
         sentAt: Date,
         receivedAt: Date? = nil,
+        readAt: Date? = nil,
+        deliveredAt: Date? = nil,
         attachments: [MessageAttachment] = [],
         reactions: [MessageReaction] = [],
         replyToMessageID: MessageID? = nil,
         isEdited: Bool = false,
-        isDeleted: Bool = false
+        isDeleted: Bool = false,
+        editHistory: [MessageEditVersion] = []
     ) {
         self.id = id
         self.conversationID = conversationID
@@ -105,10 +127,13 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.status = status
         self.sentAt = sentAt
         self.receivedAt = receivedAt
+        self.readAt = readAt
+        self.deliveredAt = deliveredAt
         self.attachments = attachments
         self.reactions = reactions
         self.replyToMessageID = replyToMessageID
         self.isEdited = isEdited
         self.isDeleted = isDeleted
+        self.editHistory = editHistory
     }
 }

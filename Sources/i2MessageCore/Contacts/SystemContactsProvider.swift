@@ -58,6 +58,13 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
     public func contact(for handle: MessageHandle) async throws -> Contact {
         try Task.checkCancellation()
 
+        // On first run the status is `.notDetermined`; request access here so
+        // participant/sender resolution can surface real names instead of
+        // silently falling back to raw phone-number handles.
+        if CNContactStore.authorizationStatus(for: .contacts) == .notDetermined {
+            _ = try? await requestContactsAccess()
+        }
+
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
             return try await fallbackResolver.contact(for: handle)
         }

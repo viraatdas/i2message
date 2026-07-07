@@ -117,6 +117,90 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(model.currentReplyTarget)
     }
 
+    func testThreadFoldsRepliesAndSurfacesInPanel() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        // Send a reply to the first message; it should become a thread.
+        model.beginReply(to: root)
+        model.updateDraftText("first thread reply")
+        await model.sendCurrentDraft()
+
+        XCTAssertTrue(model.isThreadRoot(root))
+        XCTAssertEqual(model.threadReplyCount(for: root), 1)
+
+        // The reply is folded out of the main transcript…
+        let reply = try XCTUnwrap(model.selectedMessages.last)
+        XCTAssertFalse(model.visibleTranscriptMessages.contains { $0.id == reply.id })
+        XCTAssertTrue(model.visibleTranscriptMessages.contains { $0.id == root.id })
+
+        // …but appears in the thread panel with its root first.
+        model.openThread(rootID: root.id)
+        XCTAssertTrue(model.isThreadPanelPresented)
+        XCTAssertEqual(model.threadPanelMessages.first?.id, root.id)
+        XCTAssertTrue(model.threadPanelMessages.contains { $0.id == reply.id })
+    }
+
+    func testThreadReplyFromPanelSendsWithRootAsTarget() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        model.openThread(rootID: root.id)
+        XCTAssertFalse(model.canSendThreadReply)
+
+        model.threadDraftText = "sent from the thread pane"
+        XCTAssertTrue(model.canSendThreadReply)
+        await model.sendThreadReply()
+
+        let sent = try XCTUnwrap(model.selectedMessages.last)
+        XCTAssertEqual(sent.replyToMessageID, root.id)
+        XCTAssertTrue(model.threadDraftText.isEmpty)
+    }
+
+    func testLiveTailRefreshMergesNewArrivalsWithoutDroppingHistory() async throws {
+        var dependencies = AppDependencies.test()
+        let repository = MutableTailMessageRepository(base: dependencies.messageRepository)
+        dependencies.messageRepository = repository
+        dependencies.isLiveData = true
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        // The initially-selected conversation is seeded from fixtures; pick a
+        // different one so the transcript is served by the repository, as the
+        // live app's conversations are.
+        let conversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(conversationID)
+        XCTAssertFalse(model.selectedTranscriptState.usesFixtureData)
+        await model.loadOlderMessages()
+        let before = model.selectedMessages
+        XCTAssertFalse(before.isEmpty)
+
+        // No changes in the store → transcript untouched.
+        await model.refreshSelectedTranscriptTail()
+        XCTAssertEqual(model.selectedMessages.map(\.id), before.map(\.id))
+
+        // A live arrival lands at the tail while loaded history is retained.
+        repository.add(
+            Message(
+                id: MessageID(rawValue: "live-arrival"),
+                conversationID: conversationID,
+                senderID: nil,
+                body: .text("fresh from chat.db"),
+                direction: .incoming,
+                service: .iMessage,
+                status: .delivered,
+                sentAt: Date()
+            )
+        )
+        await model.refreshSelectedTranscriptTail()
+
+        XCTAssertEqual(model.selectedMessages.last?.id, MessageID(rawValue: "live-arrival"))
+        XCTAssertTrue(Set(model.selectedMessages.map(\.id)).isSuperset(of: Set(before.map(\.id))))
+        XCTAssertEqual(model.selectedMessages.count, before.count + 1)
+    }
+
     func testCancelReplyClearsTarget() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
@@ -324,5 +408,59 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertTrue(model.isOffline)
         XCTAssertFalse(model.isCommandPalettePresented)
+    }
+}
+
+/// Wraps the fixture repository with a mutable overlay so tests can simulate
+/// messages arriving in the store after the transcript was first loaded.
+private final class MutableTailMessageRepository: MessageRepository, @unchecked Sendable {
+    private let base: any MessageRepository
+    private let lock = NSLock()
+    private var extras: [ConversationID: [Message]] = [:]
+
+    init(base: any MessageRepository) {
+        self.base = base
+    }
+
+    func add(_ message: Message) {
+        lock.lock()
+        extras[message.conversationID, default: []].append(message)
+        lock.unlock()
+    }
+
+    private func injected(for conversationID: ConversationID) -> [Message] {
+        lock.lock()
+        defer { lock.unlock() }
+        return extras[conversationID, default: []]
+    }
+
+    func messages(
+        in conversationID: ConversationID,
+        page: PageRequest,
+        around anchor: MessageID?
+    ) async throws -> Page<Message> {
+        let basePage = try await base.messages(in: conversationID, page: page, around: anchor)
+        guard page.cursor == nil, anchor == nil else {
+            return basePage
+        }
+        let injected = injected(for: conversationID)
+        guard !injected.isEmpty else {
+            return basePage
+        }
+        return Page(
+            items: basePage.items + injected,
+            nextCursor: basePage.nextCursor,
+            previousCursor: basePage.previousCursor,
+            hasMore: basePage.hasMore,
+            totalCount: basePage.totalCount.map { $0 + injected.count }
+        )
+    }
+
+    func message(id: MessageID) async throws -> Message {
+        try await base.message(id: id)
+    }
+
+    func observeMessages(in conversationID: ConversationID) -> AsyncThrowingStream<[Message], Error> {
+        base.observeMessages(in: conversationID)
     }
 }

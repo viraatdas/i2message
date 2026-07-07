@@ -14,17 +14,37 @@ struct ContentView: View {
             || model.isReminderPresented
     }
 
+    private var sidebarWidth: CGFloat {
+        switch model.sidebarMode {
+        case .hidden: return 0
+        case .compact: return I2Layout.compactSidebarWidth
+        case .full: return I2Layout.sidebarIdealWidth
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            if model.sidebarMode != .hidden {
-                SidebarView()
-                    .frame(width: model.sidebarMode == .compact ? I2Layout.compactSidebarWidth : I2Layout.sidebarIdealWidth)
-                    .transition(.move(edge: .leading))
+            // Keep the sidebar mounted and animate its width straight to 0 when
+            // hidden so all three states share one continuous glide instead of a
+            // width tween fighting a slide-in/out transition.
+            SidebarView()
+                .frame(width: sidebarWidth, alignment: .leading)
+                .clipped()
+                .opacity(model.sidebarMode == .hidden ? 0 : 1)
 
+            if model.sidebarMode != .hidden {
                 I2VerticalDivider()
+                    .transition(.opacity)
             }
 
             DetailRouterView()
+
+            if model.isThreadPanelPresented {
+                I2VerticalDivider()
+                ThreadPanelView()
+                    .frame(width: I2Layout.threadPanelWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
         }
         .focusable()
         .focusEffectDisabled()
@@ -39,7 +59,13 @@ struct ContentView: View {
             Task { await model.selectAdjacentConversation(offset: 1) }
             return .handled
         }
-        .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarMode)
+        .onKeyPress(.escape) {
+            guard model.isThreadPanelPresented, !anyOverlayPresented else { return .ignored }
+            model.closeThread()
+            return .handled
+        }
+        .animation(I2Motion.sidebar(reduceMotion: reduceMotion), value: model.sidebarMode)
+        .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: model.isThreadPanelPresented)
         .sheet(isPresented: $model.isSettingsPresented) {
             SettingsView()
                 .environmentObject(model)

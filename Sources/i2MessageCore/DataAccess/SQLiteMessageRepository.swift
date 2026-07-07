@@ -230,6 +230,16 @@ public actor SQLiteMessageRepository: MessageRepository {
             let bestText = MessageBodyDecoder.bestText(text: record.text, attributedBody: record.attributedBody)
             let body: MessageBody = bestText.map { .text($0) } ?? .empty
 
+            // Prior versions of an edited message. The chain includes the
+            // current text as its last entry; keep only what came before it.
+            var editHistory: [MessageEditVersion] = []
+            if (record.dateEditedRaw ?? 0) > 0 {
+                editHistory = MessageBodyDecoder.editHistory(fromSummaryInfo: record.summaryInfo)
+                if let lastVersion = editHistory.last, lastVersion.text == bestText {
+                    editHistory.removeLast()
+                }
+            }
+
             return Message(
                 id: MessagesIdentifier.messageID(rowID: record.rowID),
                 conversationID: conversationID,
@@ -246,11 +256,14 @@ public actor SQLiteMessageRepository: MessageRepository {
                 ),
                 sentAt: MessagesDateConverter.stableDate(from: record.dateRaw, fallbackRowID: record.rowID),
                 receivedAt: record.dateReceivedRaw.flatMap(MessagesDateConverter.date(from:)),
+                readAt: record.isFromMe ? record.dateReadRaw.flatMap(MessagesDateConverter.date(from:)) : nil,
+                deliveredAt: record.isFromMe ? record.dateDeliveredRaw.flatMap(MessagesDateConverter.date(from:)) : nil,
                 attachments: attachmentsByMessageID[record.rowID] ?? [],
                 reactions: record.guid.flatMap { reactionsByGUID[$0] } ?? [],
                 replyToMessageID: record.replyToRowID.map(MessagesIdentifier.messageID(rowID:)),
                 isEdited: (record.dateEditedRaw ?? 0) > 0,
-                isDeleted: (record.dateRetractedRaw ?? 0) > 0
+                isDeleted: (record.dateRetractedRaw ?? 0) > 0,
+                editHistory: editHistory
             )
         }
     }
@@ -270,12 +283,20 @@ public actor SQLiteMessageRepository: MessageRepository {
             let associatedGUID = schema.column("associated_message_guid", in: "message", qualifiedBy: "r")
             let associatedType = schema.column("associated_message_type", in: "message", qualifiedBy: "r")
             let text = schema.column("text", in: "message", qualifiedBy: "r")
+            // Custom-emoji tapbacks (2006+) store the emoji here; text is NULL.
+            let emoji = schema.column("associated_message_emoji", in: "message", qualifiedBy: "r")
             let date = schema.column("date", in: "message", qualifiedBy: "r")
             let handleID = schema.column("handle_id", in: "message", qualifiedBy: "r")
             let isFromMe = schema.column("is_from_me", in: "message", qualifiedBy: "r", fallback: .int(0))
             let handleValue = schema.column("id", in: "handle", qualifiedBy: "h")
             let handleService = schema.column("service", in: "handle", qualifiedBy: "h")
-            let matchingGUIDs = targetGUIDs + targetGUIDs.map { "p:0/\($0)" }
+            // Tapbacks reference their target as a bare GUID, "p:<part>/GUID"
+            // (per-part, part 0 for the whole bubble), or "bp:GUID" (balloon
+            // plugin bubbles like polls/links).
+            let matchingGUIDs = targetGUIDs
+                + targetGUIDs.map { "p:0/\($0)" }
+                + targetGUIDs.map { "p:1/\($0)" }
+                + targetGUIDs.map { "bp:\($0)" }
             let placeholders = Array(repeating: "?", count: matchingGUIDs.count).joined(separator: ", ")
 
             let rows = try connection.query(
@@ -285,6 +306,7 @@ public actor SQLiteMessageRepository: MessageRepository {
                     \(associatedGUID.sql) AS target_guid,
                     \(associatedType.sql) AS associated_type,
                     \(text.sql) AS reaction_text,
+                    \(emoji.sql) AS reaction_emoji,
                     \(date.sql) AS reaction_date,
                     \(handleID.sql) AS handle_rowid,
                     \(isFromMe.sql) AS is_from_me,
@@ -293,7 +315,7 @@ public actor SQLiteMessageRepository: MessageRepository {
                 FROM message r
                 LEFT JOIN handle h ON h.ROWID = \(handleID.sql)
                 WHERE \(associatedGUID.sql) IN (\(placeholders))
-                  AND \(associatedType.sql) BETWEEN 2000 AND 2999
+                  AND \(associatedType.sql) BETWEEN 2000 AND 3999
                 ORDER BY \(date.sql) ASC, r.ROWID ASC
                 """,
                 matchingGUIDs.map(SQLiteBindValue.text)
@@ -306,9 +328,11 @@ public actor SQLiteMessageRepository: MessageRepository {
         let contactsByHandle = try await contactResolver.contacts(for: Array(Set(handles)))
         var grouped: [String: [MessageReaction]] = [:]
 
+        // Rows arrive date-ascending, so removals (3000-series) cancel the
+        // matching earlier tapback (2000-series) from the same sender.
         for row in reactionRows {
             guard let targetGUID = row.normalizedTargetGUID,
-                  let kind = MessagesMapping.reactionKind(associatedMessageType: row.associatedType, fallbackText: row.text)
+                  let associatedType = row.associatedType
             else {
                 continue
             }
@@ -322,13 +346,44 @@ public actor SQLiteMessageRepository: MessageRepository {
                 senderID = currentUserID
             }
 
+            if (3000...3999).contains(associatedType) {
+                guard let removedKind = MessagesMapping.reactionKind(
+                    associatedMessageType: associatedType - 1000,
+                    fallbackText: row.displayText
+                ) else {
+                    continue
+                }
+                if var reactions = grouped[targetGUID] {
+                    // Custom-emoji removals carry the emoji; match it so the
+                    // right one is cancelled when a sender changed emoji tapbacks.
+                    let index = reactions.lastIndex {
+                        $0.senderID == senderID && $0.kind == removedKind
+                            && (removedKind != .custom || row.displayText == nil || $0.displayText == row.displayText)
+                    } ?? reactions.lastIndex {
+                        $0.senderID == senderID && $0.kind == removedKind
+                    }
+                    if let index {
+                        reactions.remove(at: index)
+                        grouped[targetGUID] = reactions.isEmpty ? nil : reactions
+                    }
+                }
+                continue
+            }
+
+            guard let kind = MessagesMapping.reactionKind(
+                associatedMessageType: associatedType,
+                fallbackText: row.displayText
+            ) else {
+                continue
+            }
+
             grouped[targetGUID, default: []].append(
                 MessageReaction(
                     id: "reaction:\(row.rowID)",
                     kind: kind,
                     senderID: senderID,
                     createdAt: MessagesDateConverter.stableDate(from: row.dateRaw, fallbackRowID: row.rowID),
-                    displayText: row.text
+                    displayText: row.displayText
                 )
             )
         }
@@ -352,6 +407,7 @@ public actor SQLiteMessageRepository: MessageRepository {
         let dateReceived = schema.column("date_played", in: "message", qualifiedBy: "m")
         let dateEdited = schema.column("date_edited", in: "message", qualifiedBy: "m")
         let dateRetracted = schema.column("date_retracted", in: "message", qualifiedBy: "m")
+        let summaryInfo = schema.column("message_summary_info", in: "message", qualifiedBy: "m")
         let handleID = schema.column("handle_id", in: "message", qualifiedBy: "m")
         let isFromMe = schema.column("is_from_me", in: "message", qualifiedBy: "m", fallback: .int(0))
         let isRead = schema.column("is_read", in: "message", qualifiedBy: "m")
@@ -377,6 +433,7 @@ public actor SQLiteMessageRepository: MessageRepository {
             \(dateReceived.sql) AS date_received,
             \(dateEdited.sql) AS date_edited,
             \(dateRetracted.sql) AS date_retracted,
+            \(summaryInfo.sql) AS summary_info,
             \(handleID.sql) AS handle_rowid,
             \(isFromMe.sql) AS is_from_me,
             \(isRead.sql) AS is_read,
@@ -418,7 +475,7 @@ public actor SQLiteMessageRepository: MessageRepository {
             return "1 = 1"
         }
 
-        return "COALESCE(\(messageAlias).associated_message_type, 0) NOT BETWEEN 2000 AND 2999"
+        return "COALESCE(\(messageAlias).associated_message_type, 0) < 2000"
     }
 }
 
@@ -435,6 +492,7 @@ private struct MessageRecord: Sendable {
     var dateReceivedRaw: Int64?
     var dateEditedRaw: Int64?
     var dateRetractedRaw: Int64?
+    var summaryInfo: Data?
     var handleRowID: Int64?
     var handleValue: String?
     var handleService: String?
@@ -458,6 +516,7 @@ private struct MessageRecord: Sendable {
         dateReceivedRaw = row["date_received"].int64
         dateEditedRaw = row["date_edited"].int64
         dateRetractedRaw = row["date_retracted"].int64
+        summaryInfo = row["summary_info"].data
         handleRowID = row["handle_rowid"].int64
         handleValue = row["handle_value"].string
         handleService = row["handle_service"].string
@@ -490,17 +549,28 @@ private struct ReactionRecord: Sendable {
     var targetGUID: String?
     var associatedType: Int?
     var text: String?
+    var emoji: String?
     var dateRaw: Int64?
     var handleRowID: Int64?
     var handleValue: String?
     var handleService: String?
     var isFromMe: Bool
 
+    /// The tapback's visible content: the dedicated emoji column when present
+    /// (custom-emoji tapbacks), otherwise the legacy text column.
+    var displayText: String? {
+        if let emoji, !emoji.isEmpty {
+            return emoji
+        }
+        return text
+    }
+
     init(row: SQLiteRow) {
         rowID = row["reaction_rowid"].int64 ?? 0
         targetGUID = row["target_guid"].string
         associatedType = row["associated_type"].int
         text = row["reaction_text"].string
+        emoji = row["reaction_emoji"].string
         dateRaw = row["reaction_date"].int64
         handleRowID = row["handle_rowid"].int64
         handleValue = row["handle_value"].string
@@ -513,8 +583,14 @@ private struct ReactionRecord: Sendable {
             return nil
         }
 
+        // "p:<part>/GUID" → GUID
         if let slashIndex = targetGUID.lastIndex(of: "/") {
             return String(targetGUID[targetGUID.index(after: slashIndex)...])
+        }
+
+        // "bp:GUID" → GUID (balloon-plugin bubbles)
+        if targetGUID.hasPrefix("bp:") {
+            return String(targetGUID.dropFirst(3))
         }
 
         return targetGUID

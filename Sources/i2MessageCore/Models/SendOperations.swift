@@ -3,6 +3,10 @@ import Foundation
 public enum SendTarget: Codable, Hashable, Sendable {
     case existingConversation(ConversationID)
     case handles([ContactHandle])
+    /// Addresses an existing Messages chat directly by its chat.db GUID
+    /// (e.g. "iMessage;+;chat123…"). Lets sends reach group chats, which a
+    /// single buddy handle cannot.
+    case existingChat(guid: String)
 }
 
 public struct DraftAttachment: Identifiable, Codable, Hashable, Sendable {

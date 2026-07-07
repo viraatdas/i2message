@@ -41,6 +41,9 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var lastMessage: LastMessagePreview?
     public var updatedAt: Date
     public var lastReadMessageID: MessageID?
+    /// chat.db GUID (e.g. "iMessage;+;chat123…"), used to address the chat
+    /// directly when sending. Nil for synthetic/fixture conversations.
+    public var chatGUID: String?
 
     public init(
         id: ConversationID,
@@ -54,7 +57,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isArchived: Bool = false,
         lastMessage: LastMessagePreview? = nil,
         updatedAt: Date,
-        lastReadMessageID: MessageID? = nil
+        lastReadMessageID: MessageID? = nil,
+        chatGUID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -68,6 +72,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.lastMessage = lastMessage
         self.updatedAt = updatedAt
         self.lastReadMessageID = lastReadMessageID
+        self.chatGUID = chatGUID
     }
 }
 

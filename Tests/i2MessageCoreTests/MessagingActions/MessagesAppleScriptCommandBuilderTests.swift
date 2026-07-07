@@ -38,6 +38,23 @@ final class MessagesAppleScriptCommandBuilderTests: XCTestCase {
         XCTAssertFalse(command.source.localizedCaseInsensitiveContains("chat.db"))
     }
 
+    func testExistingChatTargetAddressesModernChatClassByGUID() throws {
+        let draft = MessageDraft(
+            target: .existingChat(guid: "any;+;9747616bf15e46878b0c92c506e96c7a"),
+            text: "Group hello",
+            requestedService: .iMessage
+        )
+
+        let command = try MessagesAppleScriptCommandBuilder.sendCommand(for: draft)
+
+        // Modern `chat` class (legacy `text chat` rejects chat.db GUIDs with -1728).
+        XCTAssertTrue(command.source.contains("set targetChat to chat id \"any;+;9747616bf15e46878b0c92c506e96c7a\""))
+        XCTAssertFalse(command.source.contains("text chat id"))
+        XCTAssertTrue(command.source.contains("send \"Group hello\" to targetChat"))
+        XCTAssertFalse(command.redactedDescription.contains("9747616b"))
+        XCTAssertFalse(command.redactedDescription.contains("Group hello"))
+    }
+
     func testSMSDirectSendIsUnavailableByDefault() {
         let draft = MessageDraft(
             target: .handles([Self.handle(service: .sms)]),

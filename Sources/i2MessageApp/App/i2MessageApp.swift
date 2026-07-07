@@ -36,6 +36,29 @@ struct i2MessageApp: App {
                 }
                 .keyboardShortcut(.upArrow, modifiers: [.command])
 
+                Button("Cycle to Next Conversation") {
+                    Task { await model.cycleConversation(offset: 1) }
+                }
+                .keyboardShortcut(.tab, modifiers: [.control])
+
+                Button("Cycle to Previous Conversation") {
+                    Task { await model.cycleConversation(offset: -1) }
+                }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+
+                Menu("Jump to Conversation") {
+                    ForEach(1...9, id: \.self) { slot in
+                        Button("Conversation \(slot)") {
+                            Task { await model.selectConversation(atIndex: slot - 1) }
+                        }
+                        .keyboardShortcut(KeyEquivalent(Character("\(slot)")), modifiers: [.command])
+                    }
+                    Button("Conversation 10") {
+                        Task { await model.selectConversation(atIndex: 9) }
+                    }
+                    .keyboardShortcut("0", modifiers: [.command])
+                }
+
                 Divider()
 
                 Button("Search This Chat") {

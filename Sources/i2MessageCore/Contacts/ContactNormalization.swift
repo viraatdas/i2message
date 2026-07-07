@@ -47,11 +47,19 @@ public enum ContactHandleNormalizer {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let digits = trimmed.filter(\.isNumber)
 
-        guard trimmed.hasPrefix("+") else {
-            return digits
+        guard !digits.isEmpty else {
+            return trimmed.lowercased()
         }
 
-        return "+" + digits
+        // Match on the national number so E.164 handles from chat.db
+        // ("+15551234567") reconcile with Contacts entries stored without a
+        // country code ("(555) 123-4567"). Both sides collapse to the last ten
+        // significant digits, which is stable across the common formatting
+        // variations we see between the two data sources.
+        if digits.count > 10 {
+            return String(digits.suffix(10))
+        }
+        return digits
     }
 }
 
