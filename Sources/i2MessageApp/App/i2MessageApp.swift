@@ -106,6 +106,13 @@ struct i2MessageApp: App {
                 .keyboardShortcut("k", modifiers: [.command])
             }
 
+            CommandGroup(replacing: .help) {
+                Button("Shortcut Tour") {
+                    model.isOnboardingPresented = true
+                }
+                .keyboardShortcut("/", modifiers: [.command])
+            }
+
             CommandMenu("Diagnostics") {
                 Button("Rebuild Local Indexes") {
                     Task { await model.perform(.rebuildIndexes) }

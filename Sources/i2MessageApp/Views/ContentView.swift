@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var contentFocused: Bool
+    @AppStorage("hasSeenShortcutTour") private var hasSeenShortcutTour = false
 
     private var anyOverlayPresented: Bool {
         model.isCommandPalettePresented
@@ -97,7 +98,22 @@ struct ContentView: View {
             }
             .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: anyOverlayPresented)
         }
+        .overlay {
+            if model.isOnboardingPresented {
+                OnboardingView {
+                    hasSeenShortcutTour = true
+                    model.isOnboardingPresented = false
+                    contentFocused = true
+                }
+                .environmentObject(model)
+                .transition(.opacity.combined(with: .scale(scale: 1.02)))
+            }
+        }
+        .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: model.isOnboardingPresented)
         .task {
+            if !hasSeenShortcutTour {
+                model.isOnboardingPresented = true
+            }
             await model.load()
             contentFocused = true
         }

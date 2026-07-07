@@ -38,6 +38,7 @@ final class AppViewModel: ObservableObject {
     @Published var isCommandPalettePresented = false
     @Published var isSearchOverlayPresented = false
     @Published var isReminderPresented = false
+    @Published var isOnboardingPresented = false
 
     @Published var isNewMessagePresented = false
     @Published var newMessageQuery = ""
