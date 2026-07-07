@@ -139,3 +139,11 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Configure Apple Developer signing and notarization secrets [out of lane] — Production signed archive/notarization is blocked solely by missing Apple Developer certificate/keychain and notarization credentials.
 - **By:** n8 · 2026-07-04T20:10:48.764Z
 
+## worker: Repaired the main checkout/ref state to the final verified
+- **Did:** Repaired the main checkout/ref state to the final verified Rudder merge commit 43c330ed741d2d606935af13722ef3833ddbde6c, attached the checkout to main, pushed origin/main, created and pushed v0.1.0, and checked the GitHub Release workflow. Verification passed locally: ./scripts/verify.sh passed; ./scripts/release/local-dry-run.sh passed and produced build/Release/i2Message-0.1.0-unsigned.dmg with SHA-256 55877d3dd970996cf45c9aa0b4667544cfaa040186d64bc939f662c6fa1500a9. Privacy audit passed for tracked files, origin/main..HEAD diff, planned/pushed tag, and the mounted DMG. ./scripts/release/validate-env.sh --release is still blocked by missing Apple Developer/notarization environment variables. GitHub Actions Release run 28764151051 started for v0.1.0 but failed in the Test step on LocalSearchServiceTests.testSemanticIndexCanResumeAfterCancellation(), so release artifact/signing/upload steps were skipped.
+- **Interfaces:** origin https://github.com/viraatdas/i2message.git; branch main; commit 43c330ed741d2d606935af13722ef3833ddbde6c; tag v0.1.0; workflow .github/workflows/release.yml; local unsigned artifact build/Release/i2Message-0.1.0-unsigned.dmg and build/Release/SHA256SUMS.txt
+- **Follow-ups:**
+  - Fix CI-only semantic cancellation test failure [out of lane] — The tag-triggered Release workflow failed before artifact/signing steps because LocalSearchServiceTests.testSemanticIndexCanResumeAfterCancellation() failed on GitHub Actions, even though local ./scripts/verify.sh passed before pushing.
+  - Configure Apple Developer and notarization secrets [out of lane] — Production signed/notarized release remains blocked by missing APPLE_TEAM_ID, Developer ID certificate/password/keychain password, and App Store Connect or Apple ID notarization credentials.
+- **By:** worker · 2026-07-06T02:39:13.451Z
+
