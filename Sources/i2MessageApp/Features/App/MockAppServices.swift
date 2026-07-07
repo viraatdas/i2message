@@ -102,7 +102,7 @@ final class MockCalendarWriter: CalendarWriting, @unchecked Sendable {
 
     func addEvent(title: String, notes: String?, start: Date, hasTime: Bool) async throws -> CalendarWriteResult {
         savedTitles.append(title)
-        return CalendarWriteResult(calendarName: "Mock Calendar")
+        return CalendarWriteResult(calendarName: "Mock Calendar", isGoogleAccount: true)
     }
 }
 

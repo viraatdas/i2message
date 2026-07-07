@@ -60,9 +60,12 @@ public enum DateMentionDetector {
 public struct CalendarWriteResult: Sendable {
     /// Human-readable name of the calendar/account the event landed in.
     public var calendarName: String
+    /// True when the event landed in a Google-backed calendar.
+    public var isGoogleAccount: Bool
 
-    public init(calendarName: String) {
+    public init(calendarName: String, isGoogleAccount: Bool) {
         self.calendarName = calendarName
+        self.isGoogleAccount = isGoogleAccount
     }
 }
 

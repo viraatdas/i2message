@@ -44,7 +44,7 @@ public final class EventKitCalendarWriter: CalendarWriting, @unchecked Sendable 
         }
 
         let name = calendar.source?.title ?? calendar.title
-        return CalendarWriteResult(calendarName: name)
+        return CalendarWriteResult(calendarName: name, isGoogleAccount: isGoogleCalendar(calendar))
     }
 
     /// Prefers a Google-backed calendar, then the default calendar, then any

@@ -637,11 +637,22 @@ final class AppViewModel: ObservableObject {
                 start: mention.date,
                 hasTime: mention.hasTime
             )
-            showBanner(
-                tone: .success,
-                title: "Added to \(result.calendarName)",
-                message: "\"\(title)\" on \(Self.formattedEventDate(mention.date, hasTime: mention.hasTime))."
-            )
+            let when = Self.formattedEventDate(mention.date, hasTime: mention.hasTime)
+            if result.isGoogleAccount {
+                showBanner(
+                    tone: .success,
+                    title: "Added to \(result.calendarName)",
+                    message: "\"\(title)\" on \(when)."
+                )
+            } else {
+                // Landed in a non-Google calendar because no Google account is
+                // set up in macOS Calendar. Let the user know how to route it.
+                showBanner(
+                    tone: .info,
+                    title: "Added to \(result.calendarName)",
+                    message: "\"\(title)\" on \(when). To sync to Google Calendar, add your Google account in System Settings › Internet Accounts."
+                )
+            }
         } catch {
             showBanner(
                 tone: .error,
