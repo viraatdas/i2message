@@ -594,6 +594,74 @@ final class AppViewModel: ObservableObject {
         return links
     }
 
+    // MARK: - Calendar suggestions
+
+    private var dateMentionCache: [MessageID: DetectedDateMention?] = [:]
+
+    /// Returns a calendar-worthy date/time detected in the message, if any.
+    /// Cached so repeated bubble renders don't re-run the detector.
+    func dateMention(in message: Message) -> DetectedDateMention? {
+        if let cached = dateMentionCache[message.id] {
+            return cached
+        }
+        let mention = DateMentionDetector.firstMention(in: message.body.plainText)
+        dateMentionCache[message.id] = mention
+        return mention
+    }
+
+    var canAddToCalendar: Bool {
+        dependencies.calendarWriter != nil
+    }
+
+    /// Adds the message's detected date to the calendar (Google, if configured
+    /// in macOS Calendar; otherwise the default calendar).
+    func addToCalendar(from message: Message) async {
+        guard let writer = dependencies.calendarWriter,
+              let mention = dateMention(in: message) else {
+            return
+        }
+        let title = calendarTitle(for: message)
+        do {
+            let result = try await writer.addEvent(
+                title: title,
+                notes: calendarNotes(for: message),
+                start: mention.date,
+                hasTime: mention.hasTime
+            )
+            showBanner(
+                tone: .success,
+                title: "Added to \(result.calendarName)",
+                message: "\"\(title)\" on \(Self.formattedEventDate(mention.date, hasTime: mention.hasTime))."
+            )
+        } catch {
+            showBanner(
+                tone: .error,
+                title: "Couldn't add event",
+                message: userFacingMessage(for: error),
+                actionTitle: "Open Settings"
+            )
+        }
+    }
+
+    private func calendarTitle(for message: Message) -> String {
+        let text = message.body.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        if firstLine.isEmpty {
+            return "Event from message"
+        }
+        return firstLine.count <= 60 ? firstLine : String(firstLine.prefix(57)) + "…"
+    }
+
+    private func calendarNotes(for message: Message) -> String {
+        let who = senderName(for: message.senderID)
+        let convo = selectedConversation?.title ?? conversationTitle(for: message.conversationID)
+        return "From \(who) in \(convo) (via i2Message)\n\n\(message.body.plainText)"
+    }
+
+    private static func formattedEventDate(_ date: Date, hasTime: Bool) -> String {
+        date.formatted(date: .abbreviated, time: hasTime ? .shortened : .omitted)
+    }
+
     /// Most recent conversation activity involving this contact, including
     /// group chats they participate in.
     func lastContactedAt(for contact: Contact) -> Date? {

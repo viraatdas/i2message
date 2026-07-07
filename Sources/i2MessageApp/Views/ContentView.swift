@@ -4,6 +4,15 @@ import i2MessageCore
 struct ContentView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var contentFocused: Bool
+
+    private var anyOverlayPresented: Bool {
+        model.isCommandPalettePresented
+            || model.isSearchOverlayPresented
+            || model.isNewMessagePresented
+            || model.isInfoPanelPresented
+            || model.isReminderPresented
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -16,6 +25,19 @@ struct ContentView: View {
             }
 
             DetailRouterView()
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($contentFocused)
+        .onKeyPress(.upArrow) {
+            guard !anyOverlayPresented else { return .ignored }
+            Task { await model.selectAdjacentConversation(offset: -1) }
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            guard !anyOverlayPresented else { return .ignored }
+            Task { await model.selectAdjacentConversation(offset: 1) }
+            return .handled
         }
         .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarMode)
         .sheet(isPresented: $model.isSettingsPresented) {
@@ -48,6 +70,7 @@ struct ContentView: View {
         }
         .task {
             await model.load()
+            contentFocused = true
         }
         .preferredColorScheme(model.settings.theme.colorScheme)
         .frame(minWidth: I2Layout.minWindowWidth, minHeight: I2Layout.minWindowHeight)

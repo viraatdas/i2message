@@ -15,6 +15,7 @@ struct AppDependencies: Sendable {
     var messageSender: any MessageSending
     var imageDescriber: (any ImageDescribing)? = MockImageDescriber()
     var contactPhotoProvider: (any ContactPhotoProviding)?
+    var calendarWriter: (any CalendarWriting)? = MockCalendarWriter()
 
     static func mock(delayNanoseconds: UInt64 = 55_000_000) -> AppDependencies {
         let dataset = MockAppDataset.rich
@@ -91,6 +92,17 @@ struct MockImageDescriber: ImageDescribing {
         }
         let seed = attachment.filename.unicodeScalars.reduce(0) { ($0 &+ Int($1.value)) }
         return Self.samples[seed % Self.samples.count]
+    }
+}
+
+/// Records calendar writes without touching EventKit so previews and tests can
+/// exercise the "add to calendar" flow deterministically.
+final class MockCalendarWriter: CalendarWriting, @unchecked Sendable {
+    private(set) var savedTitles: [String] = []
+
+    func addEvent(title: String, notes: String?, start: Date, hasTime: Bool) async throws -> CalendarWriteResult {
+        savedTitles.append(title)
+        return CalendarWriteResult(calendarName: "Mock Calendar")
     }
 }
 

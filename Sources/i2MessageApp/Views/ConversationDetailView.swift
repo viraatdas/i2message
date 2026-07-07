@@ -231,6 +231,13 @@ private struct MessageBubble: View {
                     bubbleContent
                         .frame(maxWidth: maxBubbleWidth, alignment: isOutgoing ? .trailing : .leading)
 
+                    if model.canAddToCalendar, let mention = model.dateMention(in: message) {
+                        CalendarSuggestionChip(mention: mention) {
+                            Task { await model.addToCalendar(from: message) }
+                        }
+                        .frame(maxWidth: maxBubbleWidth, alignment: isOutgoing ? .trailing : .leading)
+                    }
+
                     HStack(spacing: 5) {
                         Text(message.sentAt.formatted(date: .omitted, time: .shortened))
                         if message.isEdited {
@@ -324,6 +331,15 @@ private struct MessageBubble: View {
                 Label("Copy Text", systemImage: "doc.on.doc")
             }
             .disabled(message.body.plainText.isEmpty)
+
+            if model.canAddToCalendar, model.dateMention(in: message) != nil {
+                Divider()
+                Button {
+                    Task { await model.addToCalendar(from: message) }
+                } label: {
+                    Label("Add to Calendar", systemImage: "calendar.badge.plus")
+                }
+            }
         }
     }
 
@@ -351,6 +367,35 @@ private struct MessageBubble: View {
     private var accessibilityLabel: String {
         let name = sender?.displayName ?? (message.direction == .outgoing ? "You" : "Unknown")
         return "\(name), \(message.body.plainText), \(message.sentAt.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+/// Data-detector-style affordance shown under a message when it mentions a
+/// date/time, offering to save it to the calendar.
+private struct CalendarSuggestionChip: View {
+    let mention: DetectedDateMention
+    var add: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: add) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.caption2.weight(.semibold))
+                Text("Add “\(mention.matchedText)” to Calendar")
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Color.accentColor.opacity(hovering ? 0.18 : 0.11), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Add to your calendar (Google, if configured in macOS Calendar)")
+        .accessibilityLabel("Add \(mention.matchedText) to calendar")
     }
 }
 
@@ -538,6 +583,8 @@ private struct ComposerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .frame(maxWidth: I2Layout.composerMaxWidth)
+        .frame(maxWidth: .infinity, alignment: .center)
         .background(I2Palette.appBackground)
         .onChange(of: model.focusRequest) { _, request in
             guard request == .composer else { return }

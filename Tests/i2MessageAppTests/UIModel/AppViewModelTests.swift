@@ -161,6 +161,48 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(model.transcriptPages[AppViewModel.pendingConversationID])
     }
 
+    func testDateMentionDetectionAndCalendarAdd() async throws {
+        let dependencies = AppDependencies.test()
+        let calendar = try XCTUnwrap(dependencies.calendarWriter as? MockCalendarWriter)
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        let conversationID = try XCTUnwrap(model.selectedConversationID)
+        let futureText = "Let's meet next Friday at 3pm to review"
+        let message = Message(
+            id: MessageID(rawValue: "calendar.test.message"),
+            conversationID: conversationID,
+            senderID: nil,
+            body: .text(futureText),
+            direction: .incoming,
+            service: .iMessage,
+            status: .delivered,
+            sentAt: Date()
+        )
+
+        let mention = try XCTUnwrap(model.dateMention(in: message))
+        XCTAssertTrue(mention.hasTime)
+
+        await model.addToCalendar(from: message)
+        XCTAssertEqual(calendar.savedTitles.count, 1)
+        XCTAssertEqual(model.statusBanner?.tone, .success)
+    }
+
+    func testPastDateMentionsAreIgnored() {
+        let model = AppViewModel(dependencies: .test())
+        let message = Message(
+            id: MessageID(rawValue: "calendar.past.message"),
+            conversationID: ConversationID(rawValue: "c"),
+            senderID: nil,
+            body: .text("we talked about this back on January 3, 2019"),
+            direction: .incoming,
+            service: .iMessage,
+            status: .delivered,
+            sentAt: Date()
+        )
+        XCTAssertNil(model.dateMention(in: message))
+    }
+
     func testInfoPanelCollectsSharedMediaAndLinks() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()

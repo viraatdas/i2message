@@ -49,7 +49,8 @@ extension AppDependencies {
             settingsStore: UserDefaultsSettingsStore(),
             messageSender: messagingActions,
             imageDescriber: VisionImageDescriptionService(),
-            contactPhotoProvider: contacts
+            contactPhotoProvider: contacts,
+            calendarWriter: EventKitCalendarWriter()
         )
     }
 

@@ -11,6 +11,7 @@ enum I2Layout {
     static let inspectorWidth: CGFloat = 284
     static let transcriptMaxBubbleWidth: CGFloat = 560
     static let compactTranscriptMaxBubbleWidth: CGFloat = 500
+    static let composerMaxWidth: CGFloat = 720
     static let rowHeight: CGFloat = 68
 }
 

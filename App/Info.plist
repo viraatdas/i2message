@@ -28,6 +28,8 @@
 	<string>i2Message can use Contacts to show names and avatars for message participants.</string>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>i2Message can notify you about new messages when notification support is enabled.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>i2Message can add events to your calendar when you choose to save a date detected in a message. If your Google account is set up in macOS Calendar, events sync to Google Calendar.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
