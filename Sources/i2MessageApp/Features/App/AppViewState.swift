@@ -124,6 +124,7 @@ enum AppCommand: String, CaseIterable, Identifiable {
     case newMessage
     case focusFilter
     case openSearch
+    case searchCurrentChat
     case toggleSemantic
     case nextConversation
     case previousConversation
@@ -142,7 +143,9 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .focusFilter:
             return "Focus Sidebar Filter"
         case .openSearch:
-            return "Open Search Workspace"
+            return "Search All Chats"
+        case .searchCurrentChat:
+            return "Search This Chat"
         case .toggleSemantic:
             return "Toggle Semantic Search"
         case .nextConversation:
@@ -169,7 +172,9 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .focusFilter:
             return "Filter conversations and contacts"
         case .openSearch:
-            return "Exact, semantic, and paged result previews"
+            return "Search every conversation at once"
+        case .searchCurrentChat:
+            return "Search only the selected conversation"
         case .toggleSemantic:
             return "Switch between phrase search and local meaning search"
         case .nextConversation, .previousConversation:
@@ -195,6 +200,8 @@ enum AppCommand: String, CaseIterable, Identifiable {
             return "line.3.horizontal.decrease.circle"
         case .openSearch:
             return "magnifyingglass"
+        case .searchCurrentChat:
+            return "text.magnifyingglass"
         case .toggleSemantic:
             return "sparkles"
         case .nextConversation:
@@ -219,9 +226,11 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .newMessage:
             return "⌘N"
         case .focusFilter:
-            return "⌘F"
+            return "⌘⌥F"
         case .openSearch:
-            return "⌘⇧F"
+            return "⌘⇧P"
+        case .searchCurrentChat:
+            return "⌘F"
         case .toggleSemantic:
             return "⌘⇧K"
         case .nextConversation:

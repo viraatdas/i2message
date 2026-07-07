@@ -42,6 +42,8 @@ final class AppViewModel: ObservableObject {
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
     @Published private var replyTargets: [ConversationID: MessageID] = [:]
     @Published private(set) var sendOperation: SendOperation?
+    @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
+    private var describingAttachmentIDs: Set<AttachmentID> = []
 
     let dependencies: AppDependencies
     private var searchPageCursor: PageCursor?
@@ -489,6 +491,32 @@ final class AppViewModel: ObservableObject {
         return self.message(with: replyID, in: message.conversationID)
     }
 
+    func requestAttachmentDescription(for attachment: MessageAttachment, in message: Message) {
+        guard attachment.kind == .image,
+              attachmentDescriptions[attachment.id] == nil,
+              !describingAttachmentIDs.contains(attachment.id),
+              let describer = dependencies.imageDescriber
+        else {
+            return
+        }
+        let isFixtureContent = !dependencies.isLiveData
+            || (transcriptPages[message.conversationID]?.usesFixtureData ?? false)
+        describingAttachmentIDs.insert(attachment.id)
+        Task { [weak self] in
+            var description = await describer.describe(attachment)
+            if description == nil, isFixtureContent {
+                // Fixture attachments have no real file on disk; show the demo
+                // description so sample mode still demonstrates the feature.
+                description = await MockImageDescriber().describe(attachment)
+            }
+            guard let self else { return }
+            self.describingAttachmentIDs.remove(attachment.id)
+            if let description {
+                self.attachmentDescriptions[attachment.id] = description
+            }
+        }
+    }
+
     func toggleReaction(_ kind: MessageReactionKind, on message: Message) {
         var state = transcriptPages[message.conversationID] ?? .empty
         guard let index = state.messages.firstIndex(where: { $0.id == message.id }) else {
@@ -779,6 +807,11 @@ final class AppViewModel: ObservableObject {
         case .focusFilter:
             focusRequest = .sidebarSearch
         case .openSearch:
+            searchConversationScope = nil
+            sidebarDestination = .search
+            focusRequest = .searchField
+        case .searchCurrentChat:
+            searchConversationScope = selectedConversationID
             sidebarDestination = .search
             focusRequest = .searchField
         case .toggleSemantic:

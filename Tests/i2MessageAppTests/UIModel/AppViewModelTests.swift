@@ -152,6 +152,40 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(updated.reactions.count, baseline)
     }
 
+    func testSearchCommandsScopeCorrectly() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+        let selectedID = try XCTUnwrap(model.selectedConversationID)
+
+        await model.perform(.searchCurrentChat)
+        XCTAssertEqual(model.sidebarDestination, .search)
+        XCTAssertEqual(model.searchConversationScope, selectedID)
+        XCTAssertEqual(model.focusRequest, .searchField)
+
+        await model.perform(.openSearch)
+        XCTAssertNil(model.searchConversationScope)
+        XCTAssertEqual(model.sidebarDestination, .search)
+    }
+
+    func testImageAttachmentsGetLocalDescriptions() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let imageMessage = try XCTUnwrap(
+            model.dependencies.seed.allMessages
+                .first { message in message.attachments.contains { $0.kind == .image } }
+        )
+        let imageAttachment = try XCTUnwrap(imageMessage.attachments.first { $0.kind == .image })
+
+        model.requestAttachmentDescription(for: imageAttachment, in: imageMessage)
+        for _ in 0..<50 where model.attachmentDescriptions[imageAttachment.id] == nil {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        let description = try XCTUnwrap(model.attachmentDescriptions[imageAttachment.id])
+        XCTAssertFalse(description.isEmpty)
+    }
+
     func testCommandPaletteFiltersAndRunsCommands() async {
         let model = AppViewModel(dependencies: .test())
 

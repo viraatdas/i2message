@@ -85,15 +85,12 @@ private struct ConversationHeader: View {
             .help("Open in Messages")
 
             Button {
-                model.searchConversationScope = conversation.id
-                model.searchQuery = conversation.title
-                model.sidebarDestination = .search
-                Task { await model.performSearch(reset: true) }
+                Task { await model.perform(.searchCurrentChat) }
             } label: {
                 Label("Search This Thread", systemImage: "magnifyingglass")
             }
             .buttonStyle(.borderless)
-            .help("Search this thread")
+            .help("Search this thread (⌘F)")
 
             Button {
                 showsInspector.toggle()
@@ -309,7 +306,20 @@ private struct MessageBubble: View {
             }
 
             ForEach(message.attachments) { attachment in
-                AttachmentChip(attachment: attachment)
+                VStack(alignment: .leading, spacing: 3) {
+                    AttachmentChip(attachment: attachment)
+
+                    if let description = model.attachmentDescriptions[attachment.id] {
+                        Label(description, systemImage: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .accessibilityLabel("Image description: \(description)")
+                    }
+                }
+                .task(id: attachment.id) {
+                    model.requestAttachmentDescription(for: attachment, in: message)
+                }
             }
         }
         .padding(.horizontal, 12)

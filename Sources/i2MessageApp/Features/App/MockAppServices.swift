@@ -13,6 +13,7 @@ struct AppDependencies: Sendable {
     var messagingActions: (any MessagingActionServicing)?
     var settingsStore: any SettingsStoring
     var messageSender: any MessageSending
+    var imageDescriber: (any ImageDescribing)? = MockImageDescriber()
 
     static func mock(delayNanoseconds: UInt64 = 55_000_000) -> AppDependencies {
         let dataset = MockAppDataset.rich
@@ -70,6 +71,25 @@ struct AppDependencies: Sendable {
 
     static func test() -> AppDependencies {
         mock(delayNanoseconds: 0)
+    }
+}
+
+/// Deterministic fixture stand-in for the local Vision describer so previews
+/// and tests show the described-image UI without real image files.
+struct MockImageDescriber: ImageDescribing {
+    private static let samples = [
+        "Looks like a window screenshot · Reads “Search results update as you type”",
+        "Looks like a whiteboard photo · Reads “launch checklist: search, parity, polish”",
+        "Looks like an outdoor photo, sky, trees",
+        "Looks like a document screenshot · Reads “Quarterly summary draft”",
+    ]
+
+    func describe(_ attachment: MessageAttachment) async -> String? {
+        guard attachment.kind == .image else {
+            return nil
+        }
+        let seed = attachment.filename.unicodeScalars.reduce(0) { ($0 &+ Int($1.value)) }
+        return Self.samples[seed % Self.samples.count]
     }
 }
 

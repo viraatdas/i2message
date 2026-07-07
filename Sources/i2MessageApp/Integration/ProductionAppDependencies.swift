@@ -47,7 +47,8 @@ extension AppDependencies {
             permissionManager: permissionManager,
             messagingActions: messagingActions,
             settingsStore: UserDefaultsSettingsStore(),
-            messageSender: messagingActions
+            messageSender: messagingActions,
+            imageDescriber: VisionImageDescriptionService()
         )
     }
 

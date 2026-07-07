@@ -38,15 +38,20 @@ struct i2MessageApp: App {
 
                 Divider()
 
-                Button("Focus Filter") {
-                    Task { await model.perform(.focusFilter) }
+                Button("Search This Chat") {
+                    Task { await model.perform(.searchCurrentChat) }
                 }
                 .keyboardShortcut("f", modifiers: [.command])
 
-                Button("Open Search") {
+                Button("Search All Chats") {
                     Task { await model.perform(.openSearch) }
                 }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Button("Focus Filter") {
+                    Task { await model.perform(.focusFilter) }
+                }
+                .keyboardShortcut("f", modifiers: [.command, .option])
 
                 Button(model.searchMode == .semantic ? "Use Exact Search" : "Use Semantic Search") {
                     Task { await model.perform(.toggleSemantic) }
@@ -58,7 +63,7 @@ struct i2MessageApp: App {
                 Button("Command Palette") {
                     model.openCommandPalette()
                 }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .keyboardShortcut("k", modifiers: [.command])
             }
 
             CommandMenu("Diagnostics") {
