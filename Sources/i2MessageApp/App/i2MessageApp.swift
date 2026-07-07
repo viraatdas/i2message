@@ -48,10 +48,22 @@ struct i2MessageApp: App {
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
 
-                Button("Focus Filter") {
-                    Task { await model.perform(.focusFilter) }
+                Button("Toggle Sidebar") {
+                    model.cycleSidebarMode()
                 }
-                .keyboardShortcut("f", modifiers: [.command, .option])
+                .keyboardShortcut("s", modifiers: [.command])
+
+                Divider()
+
+                Button("Mark Unread and Next") {
+                    Task { await model.markSelectedUnreadAndAdvance() }
+                }
+                .keyboardShortcut("u", modifiers: [.command])
+
+                Button("Remind Me…") {
+                    model.openReminderPanel()
+                }
+                .keyboardShortcut("i", modifiers: [.command])
 
                 Button(model.searchMode == .semantic ? "Use Exact Search" : "Use Semantic Search") {
                     Task { await model.perform(.toggleSemantic) }

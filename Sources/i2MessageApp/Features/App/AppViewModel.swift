@@ -1,11 +1,13 @@
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 import i2MessageCore
 
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var sidebarDestination: SidebarDestination = .conversations
+    @Published var sidebarMode: SidebarDisplayMode = .full
     @Published var conversationScope: ConversationScope = .all
     @Published var quickFilterText = ""
     @Published var selectedConversationID: ConversationID?
@@ -33,6 +35,9 @@ final class AppViewModel: ObservableObject {
 
     @Published var commandPaletteQuery = ""
     @Published var isCommandPalettePresented = false
+    @Published var isSearchOverlayPresented = false
+    @Published var isReminderPresented = false
+    private var locallyUnreadIDs: Set<ConversationID> = []
     @Published var isSettingsPresented = false
     @Published private(set) var focusRequest: FocusRequest?
     @Published private(set) var statusBanner: StatusBanner?
@@ -44,6 +49,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var sendOperation: SendOperation?
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
     private var describingAttachmentIDs: Set<AttachmentID> = []
+    @Published private(set) var contactThumbnails: [ContactID: Data] = [:]
+    private var loadingThumbnailIDs: Set<ContactID> = []
 
     let dependencies: AppDependencies
     private var searchPageCursor: PageCursor?
@@ -140,7 +147,14 @@ final class AppViewModel: ObservableObject {
                 return contact.displayName.localizedCaseInsensitiveContains(query)
                     || contact.handles.contains { $0.value.localizedCaseInsensitiveContains(query) }
             }
-            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            .sorted { lhs, rhs in
+                let lhsDate = lastContactedAt(for: lhs) ?? .distantPast
+                let rhsDate = lastContactedAt(for: rhs) ?? .distantPast
+                if lhsDate != rhsDate {
+                    return lhsDate > rhsDate
+                }
+                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+            }
     }
 
     var currentDraftText: String {
@@ -225,11 +239,14 @@ final class AppViewModel: ObservableObject {
     func loadConversations() async {
         conversationPhase = .loading
         do {
+            // Live mode intentionally loads only the most recent conversations
+            // for now; older threads stay reachable through search.
             let page = try await dependencies.conversationRepository.conversations(
-                page: PageRequest(limit: 200),
+                page: PageRequest(limit: dependencies.isLiveData ? 10 : 200),
                 filter: ConversationFilter(includeArchived: true)
             )
             conversations = page.items.sorted(by: MockAppDataset.conversationSort)
+            applyLocalUnreadOverrides()
             conversationPhase = conversations.isEmpty ? .empty : .loaded
         } catch {
             AppDiagnostics.failure("load_conversations", category: String(describing: type(of: error)))
@@ -265,6 +282,7 @@ final class AppViewModel: ObservableObject {
     func selectConversation(_ id: ConversationID, highlightedMessageID: MessageID? = nil) async {
         sidebarDestination = .conversations
         selectedConversationID = id
+        clearLocalUnread(for: id)
         self.highlightedMessageID = highlightedMessageID
         if let highlightedMessageID {
             await loadMessages(in: id, reset: true, around: highlightedMessageID)
@@ -276,6 +294,108 @@ final class AppViewModel: ObservableObject {
     func selectContact(_ id: ContactID) {
         sidebarDestination = .contacts
         selectedContactID = id
+    }
+
+    func cycleSidebarMode() {
+        sidebarMode = sidebarMode.next
+    }
+
+    /// Cmd+U: keep the current chat visibly unread, then move on to the next
+    /// one in the list. The unread mark is app-local; the Messages database
+    /// stays untouched.
+    func markSelectedUnreadAndAdvance() async {
+        guard let selectedConversationID else {
+            return
+        }
+        locallyUnreadIDs.insert(selectedConversationID)
+        applyLocalUnreadOverrides()
+
+        // Only move if there is a next chat; re-selecting the same one would
+        // immediately clear the unread mark we just set.
+        let visible = filteredConversations
+        if let currentIndex = visible.firstIndex(where: { $0.id == selectedConversationID }),
+           currentIndex + 1 < visible.count {
+            await selectConversation(visible[currentIndex + 1].id)
+        }
+    }
+
+    private func applyLocalUnreadOverrides() {
+        guard !locallyUnreadIDs.isEmpty else {
+            return
+        }
+        for index in conversations.indices where locallyUnreadIDs.contains(conversations[index].id) {
+            conversations[index].unreadCount = max(1, conversations[index].unreadCount)
+        }
+    }
+
+    private func clearLocalUnread(for conversationID: ConversationID) {
+        guard locallyUnreadIDs.remove(conversationID) != nil else {
+            return
+        }
+        if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+            conversations[index].unreadCount = 0
+        }
+    }
+
+    func openReminderPanel() {
+        guard selectedConversation != nil else {
+            return
+        }
+        isReminderPresented = true
+    }
+
+    func closeReminderPanel() {
+        isReminderPresented = false
+    }
+
+    /// Cmd+I: schedule a local notification that brings the user back to the
+    /// selected chat after the chosen delay.
+    func scheduleReminder(after interval: TimeInterval, label: String) async {
+        guard let conversation = selectedConversation else {
+            return
+        }
+        isReminderPresented = false
+
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if settings.authorizationStatus == .notDetermined {
+            _ = try? await dependencies.permissionManager.request(.notifications)
+        } else if settings.authorizationStatus == .denied {
+            showBanner(
+                tone: .warning,
+                title: "Notifications are off",
+                message: "Allow notifications for i2Message in System Settings so reminders can fire.",
+                actionTitle: "Open Settings"
+            )
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Reminder: \(conversation.title)"
+        content.body = "You asked to come back to this conversation."
+        content.sound = .default
+        content.threadIdentifier = conversation.id.rawValue
+
+        let request = UNNotificationRequest(
+            identifier: "reminder.\(conversation.id.rawValue).\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(60, interval), repeats: false)
+        )
+
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            showBanner(tone: .success, title: "Reminder set", message: "You'll be reminded about \(conversation.title) \(label).")
+        } catch {
+            showBanner(tone: .error, title: "Could not set reminder", message: error.localizedDescription)
+        }
+    }
+
+    /// Most recent conversation activity involving this contact, including
+    /// group chats they participate in.
+    func lastContactedAt(for contact: Contact) -> Date? {
+        conversations
+            .filter { conversation in conversation.participants.contains { $0.id == contact.id } }
+            .map(\.updatedAt)
+            .max()
     }
 
     func conversations(for contact: Contact) -> [Conversation] {
@@ -563,6 +683,9 @@ final class AppViewModel: ObservableObject {
         )
 
         do {
+            if dependencies.isLiveData {
+                await ensureAutomationPermission()
+            }
             sendOperation = try await dependencies.messageSender.validate(draft)
             let receipt: SendReceipt
             if let replyTargetID, let actions = dependencies.messagingActions {
@@ -667,6 +790,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openSearchResult(_ result: SearchResult) async {
+        closeSearchOverlay()
         if let contactID = result.contactID, result.conversationID == nil {
             selectContact(contactID)
             return
@@ -678,6 +802,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openSemanticSnippet(_ snippet: SemanticSnippet) async {
+        closeSearchOverlay()
         await selectConversation(snippet.conversationID, highlightedMessageID: snippet.sourceMessageIDs.first)
     }
 
@@ -783,6 +908,17 @@ final class AppViewModel: ObservableObject {
         statusBanner = nil
     }
 
+    func openSearchOverlay(scopedToCurrentConversation: Bool) {
+        searchConversationScope = scopedToCurrentConversation ? selectedConversationID : nil
+        isSearchOverlayPresented = true
+        isCommandPalettePresented = false
+        focusRequest = .searchField
+    }
+
+    func closeSearchOverlay() {
+        isSearchOverlayPresented = false
+    }
+
     func openCommandPalette() {
         isCommandPalettePresented = true
         commandPaletteQuery = ""
@@ -804,16 +940,10 @@ final class AppViewModel: ObservableObject {
                 focusRequest = .composer
                 showBanner(tone: .info, title: "New message", message: "Fixture composer is ready for the selected conversation.")
             }
-        case .focusFilter:
-            focusRequest = .sidebarSearch
         case .openSearch:
-            searchConversationScope = nil
-            sidebarDestination = .search
-            focusRequest = .searchField
+            openSearchOverlay(scopedToCurrentConversation: false)
         case .searchCurrentChat:
-            searchConversationScope = selectedConversationID
-            sidebarDestination = .search
-            focusRequest = .searchField
+            openSearchOverlay(scopedToCurrentConversation: true)
         case .toggleSemantic:
             await toggleSemanticSearch()
         case .nextConversation:
@@ -889,20 +1019,40 @@ final class AppViewModel: ObservableObject {
         guard let id else {
             return "System"
         }
-        if id == dependencies.seed.currentUser.id {
+        if id == dependencies.seed.currentUser.id || id.rawValue == "current-user" {
             return "You"
         }
-        if let contact = contacts.first(where: { $0.id == id }) ?? dependencies.seed.contacts.first(where: { $0.id == id }) {
-            return contact.displayName
-        }
-        return id.rawValue == "current-user" ? "You" : "Unknown"
+        return contact(for: id)?.displayName ?? "Unknown"
     }
 
     func contact(for id: ContactID?) -> Contact? {
         guard let id else {
             return nil
         }
-        return contacts.first { $0.id == id } ?? dependencies.seed.contacts.first { $0.id == id }
+        // Conversation participants carry contacts resolved from raw Messages
+        // handles (including non-address-book fallbacks), so search them too.
+        return contacts.first { $0.id == id }
+            ?? conversations.lazy.flatMap(\.participants).first { $0.id == id }
+            ?? dependencies.seed.contacts.first { $0.id == id }
+    }
+
+    func requestContactThumbnail(for contact: Contact?) {
+        guard let contact,
+              contactThumbnails[contact.id] == nil,
+              !loadingThumbnailIDs.contains(contact.id),
+              let photoProvider = dependencies.contactPhotoProvider
+        else {
+            return
+        }
+        loadingThumbnailIDs.insert(contact.id)
+        Task { [weak self] in
+            let data = try? await photoProvider.thumbnailData(for: contact.id)
+            guard let self else { return }
+            self.loadingThumbnailIDs.remove(contact.id)
+            if let data {
+                self.contactThumbnails[contact.id] = data
+            }
+        }
     }
 
     func conversationTitle(for id: ConversationID) -> String {
@@ -941,12 +1091,17 @@ final class AppViewModel: ObservableObject {
         let indexer = dependencies.searchIndexer
         observationTask = Task { [weak self] in
             do {
+                let isLive = self?.dependencies.isLiveData ?? false
                 for try await nextConversations in repository.observeConversations(filter: ConversationFilter(includeArchived: true)) {
                     try Task.checkCancellation()
-                    let sorted = nextConversations.sorted(by: MockAppDataset.conversationSort)
+                    var sorted = nextConversations.sorted(by: MockAppDataset.conversationSort)
+                    if isLive {
+                        sorted = Array(sorted.prefix(10))
+                    }
                     await MainActor.run { [weak self] in
                         guard let self else { return }
                         self.conversations = sorted
+                        self.applyLocalUnreadOverrides()
                         if let selectedConversationID = self.selectedConversationID,
                            !sorted.contains(where: { $0.id == selectedConversationID }) {
                             self.selectedConversationID = sorted.first?.id
@@ -1039,6 +1194,17 @@ final class AppViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             await self?.loadSelectedConversation(reset: true)
         }
+    }
+
+    /// Runs the Messages Automation preflight (showing the macOS consent
+    /// prompt if needed) the first time the user sends in a session.
+    private func ensureAutomationPermission() async {
+        let state = permissionSnapshot.status(for: .appleEventsMessages)?.state
+        guard state == nil || state == .notDetermined else {
+            return
+        }
+        _ = try? await dependencies.permissionManager.request(.appleEventsMessages)
+        await refreshPermissions()
     }
 
     private func handoffDraftForManualSend(draft: MessageDraft) async -> Bool {

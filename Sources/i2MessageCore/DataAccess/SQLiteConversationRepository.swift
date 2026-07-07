@@ -145,7 +145,8 @@ public actor SQLiteConversationRepository: ConversationRepository {
                     LastMessagePreview(
                         messageID: MessagesIdentifier.messageID(rowID: messageRowID),
                         senderID: senderID,
-                        text: record.latestText?.isEmpty == false ? record.latestText! : (record.latestHasAttachments ? "Attachment" : ""),
+                        text: MessageBodyDecoder.bestText(text: record.latestText, attributedBody: record.latestAttributedBody)
+                            ?? (record.latestHasAttachments ? "Attachment" : ""),
                         sentAt: MessagesDateConverter.stableDate(from: record.latestDateRaw, fallbackRowID: messageRowID),
                         hasAttachments: record.latestHasAttachments
                     )
@@ -259,6 +260,7 @@ public actor SQLiteConversationRepository: ConversationRepository {
         let latestSortDateSubquery = latestMessageSubquery(schema: schema, selectedExpression: latestMessageSortExpression(schema: schema, messageAlias: "m2", joinAlias: "cmj2"))
         let unreadSubquery = unreadCountSubquery(schema: schema)
         let latestText = schema.column("text", in: "message", qualifiedBy: "m")
+        let latestAttributedBody = schema.column("attributedBody", in: "message", qualifiedBy: "m")
         let latestDate = schema.column("date", in: "message", qualifiedBy: "m")
         let latestHandleID = schema.column("handle_id", in: "message", qualifiedBy: "m")
         let latestIsFromMe = schema.column("is_from_me", in: "message", qualifiedBy: "m", fallback: .int(0))
@@ -351,6 +353,7 @@ public actor SQLiteConversationRepository: ConversationRepository {
         SELECT
             base.*,
             \(latestText.sql) AS latest_text,
+            \(latestAttributedBody.sql) AS latest_attributed_body,
             \(latestDate.sql) AS latest_date,
             \(latestHandleID.sql) AS latest_handle_id,
             \(latestIsFromMe.sql) AS latest_is_from_me,
@@ -432,6 +435,7 @@ private struct ConversationRecord: Sendable {
     var pinnedRank: Int?
     var latestMessageRowID: Int64?
     var latestText: String?
+    var latestAttributedBody: Data?
     var latestDateRaw: Int64?
     var latestHandleRowID: Int64?
     var latestHandleValue: String?
@@ -454,6 +458,7 @@ private struct ConversationRecord: Sendable {
         pinnedRank = row["pinned_rank"].int
         latestMessageRowID = row["latest_message_id"].int64
         latestText = row["latest_text"].string
+        latestAttributedBody = row["latest_attributed_body"].data
         latestDateRaw = row["latest_date"].int64
         latestHandleRowID = row["latest_handle_id"].int64
         latestHandleValue = row["latest_handle_value"].string

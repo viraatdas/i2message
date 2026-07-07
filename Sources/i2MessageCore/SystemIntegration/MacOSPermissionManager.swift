@@ -7,6 +7,20 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
     private let automation: (any MessagesAutomationControlling)?
     private let fileManager: FileManager
     private let dateProvider: @Sendable () -> Date
+    private let cacheLock = NSLock()
+    private var cachedAppleEventsStatus: PermissionStatus?
+
+    private func readCachedAppleEventsStatus() -> PermissionStatus? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cachedAppleEventsStatus
+    }
+
+    private func storeCachedAppleEventsStatus(_ status: PermissionStatus) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        cachedAppleEventsStatus = status
+    }
 
     public init(
         automation: (any MessagesAutomationControlling)? = nil,
@@ -112,6 +126,14 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
     }
 
     private func appleEventsStatus() async -> PermissionStatus {
+        // The only way macOS lets an app learn this permission is by sending a
+        // preflight Apple Event (which may show the consent prompt), so reuse
+        // the result of the last preflight instead of reporting notDetermined
+        // forever.
+        if let cached = readCachedAppleEventsStatus() {
+            return cached
+        }
+
         guard let automation else {
             return PermissionStatus(
                 permission: .appleEventsMessages,
@@ -143,9 +165,10 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
             )
         }
 
+        let status: PermissionStatus
         do {
             _ = try await automation.execute(MessagesAppleScriptCommandBuilder.preflightCommand())
-            return PermissionStatus(
+            status = PermissionStatus(
                 permission: .appleEventsMessages,
                 state: .granted,
                 reason: "Messages Automation preflight succeeded.",
@@ -153,20 +176,23 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
             )
         } catch let failure as MessagesAutomationFailure {
             let state: PermissionState = failure.kind == .appUnavailable ? .unsupported : .denied
-            return PermissionStatus(
+            status = PermissionStatus(
                 permission: .appleEventsMessages,
                 state: state,
                 reason: failure.reason,
                 lastCheckedAt: dateProvider()
             )
         } catch {
-            return PermissionStatus(
+            status = PermissionStatus(
                 permission: .appleEventsMessages,
                 state: .denied,
                 reason: error.localizedDescription,
                 lastCheckedAt: dateProvider()
             )
         }
+
+        storeCachedAppleEventsStatus(status)
+        return status
     }
 
     private func notificationsStatus() async -> PermissionStatus {

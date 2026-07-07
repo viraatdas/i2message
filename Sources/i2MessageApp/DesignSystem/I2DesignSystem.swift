@@ -7,6 +7,7 @@ enum I2Layout {
     static let sidebarMinWidth: CGFloat = 286
     static let sidebarIdealWidth: CGFloat = 328
     static let sidebarMaxWidth: CGFloat = 390
+    static let compactSidebarWidth: CGFloat = 64
     static let inspectorWidth: CGFloat = 284
     static let transcriptMaxBubbleWidth: CGFloat = 560
     static let compactTranscriptMaxBubbleWidth: CGFloat = 500

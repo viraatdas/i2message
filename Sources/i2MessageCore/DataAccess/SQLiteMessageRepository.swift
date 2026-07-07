@@ -227,7 +227,8 @@ public actor SQLiteMessageRepository: MessageRepository {
 
         return records.map { record in
             let senderID = record.isFromMe ? nil : record.senderHandle.flatMap { contactsByHandle[$0]?.id }
-            let body: MessageBody = record.text?.isEmpty == false ? .text(record.text!) : .empty
+            let bestText = MessageBodyDecoder.bestText(text: record.text, attributedBody: record.attributedBody)
+            let body: MessageBody = bestText.map { .text($0) } ?? .empty
 
             return Message(
                 id: MessagesIdentifier.messageID(rowID: record.rowID),
@@ -343,6 +344,7 @@ public actor SQLiteMessageRepository: MessageRepository {
     ) -> String {
         let messageGuid = schema.column("guid", in: "message", qualifiedBy: "m")
         let text = schema.column("text", in: "message", qualifiedBy: "m")
+        let attributedBody = schema.column("attributedBody", in: "message", qualifiedBy: "m")
         let service = schema.column("service", in: "message", qualifiedBy: "m")
         let date = schema.column("date", in: "message", qualifiedBy: "m")
         let dateRead = schema.column("date_read", in: "message", qualifiedBy: "m")
@@ -367,6 +369,7 @@ public actor SQLiteMessageRepository: MessageRepository {
             m.ROWID AS message_rowid,
             \(messageGuid.sql) AS message_guid,
             \(text.sql) AS message_text,
+            \(attributedBody.sql) AS attributed_body,
             \(service.sql) AS service,
             \(date.sql) AS message_date,
             \(dateRead.sql) AS date_read,
@@ -424,6 +427,7 @@ private struct MessageRecord: Sendable {
     var rowID: Int64
     var guid: String?
     var text: String?
+    var attributedBody: Data?
     var service: String?
     var dateRaw: Int64?
     var dateReadRaw: Int64?
@@ -446,6 +450,7 @@ private struct MessageRecord: Sendable {
         rowID = row["message_rowid"].int64 ?? 0
         guid = row["message_guid"].string
         text = row["message_text"].string
+        attributedBody = row["attributed_body"].data
         service = row["service"].string
         dateRaw = row["message_date"].int64
         dateReadRaw = row["date_read"].int64

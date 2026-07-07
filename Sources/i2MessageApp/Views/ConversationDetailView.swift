@@ -72,33 +72,33 @@ private struct ConversationHeader: View {
 
             Spacer(minLength: 12)
 
-            if let total = model.selectedTranscriptState.totalCount {
-                I2Pill(title: "\(model.selectedMessages.count)/\(total)", systemImage: "text.bubble", tint: .secondary)
-            }
+            Menu {
+                Button {
+                    Task { await model.perform(.searchCurrentChat) }
+                } label: {
+                    Label("Search This Chat", systemImage: "magnifyingglass")
+                }
 
-            Button {
-                Task { await model.openSelectedConversationInMessages() }
+                Button {
+                    Task { await model.openSelectedConversationInMessages() }
+                } label: {
+                    Label("Open in Messages", systemImage: "arrow.up.forward.app")
+                }
+
+                Divider()
+
+                Button {
+                    showsInspector.toggle()
+                } label: {
+                    Label(showsInspector ? "Hide Details" : "Show Details", systemImage: "info.circle")
+                }
             } label: {
-                Label("Open in Messages", systemImage: "arrow.up.forward.app")
+                Label("More", systemImage: "ellipsis")
             }
             .buttonStyle(.borderless)
-            .help("Open in Messages")
-
-            Button {
-                Task { await model.perform(.searchCurrentChat) }
-            } label: {
-                Label("Search This Thread", systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.borderless)
-            .help("Search this thread (⌘F)")
-
-            Button {
-                showsInspector.toggle()
-            } label: {
-                Label(showsInspector ? "Hide Details" : "Show Details", systemImage: "info.circle")
-            }
-            .buttonStyle(.borderless)
-            .help(showsInspector ? "Hide details" : "Show details")
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .help("Chat actions")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -574,18 +574,6 @@ private struct ComposerView: View {
                 .help("Send")
             }
 
-            HStack(spacing: 8) {
-                Text(model.isUsingLiveData ? "Messages composer" : "Fixture composer")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if let operation = model.sendOperation {
-                    I2Pill(title: operation.state.rawValue, systemImage: "paperplane", tint: operation.state == .failed ? .red : .secondary)
-                }
-                Spacer()
-                Text("Return sends · Shift-Return adds a line")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

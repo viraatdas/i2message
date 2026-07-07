@@ -158,13 +158,19 @@ final class AppViewModelTests: XCTestCase {
         let selectedID = try XCTUnwrap(model.selectedConversationID)
 
         await model.perform(.searchCurrentChat)
-        XCTAssertEqual(model.sidebarDestination, .search)
+        XCTAssertTrue(model.isSearchOverlayPresented)
         XCTAssertEqual(model.searchConversationScope, selectedID)
         XCTAssertEqual(model.focusRequest, .searchField)
 
         await model.perform(.openSearch)
         XCTAssertNil(model.searchConversationScope)
-        XCTAssertEqual(model.sidebarDestination, .search)
+        XCTAssertTrue(model.isSearchOverlayPresented)
+
+        model.searchQuery = "semantic"
+        await model.performSearch(reset: true)
+        let result = try XCTUnwrap(model.exactSearchResults.first { $0.conversationID != nil })
+        await model.openSearchResult(result)
+        XCTAssertFalse(model.isSearchOverlayPresented)
     }
 
     func testImageAttachmentsGetLocalDescriptions() async throws {

@@ -14,6 +14,7 @@ struct AppDependencies: Sendable {
     var settingsStore: any SettingsStoring
     var messageSender: any MessageSending
     var imageDescriber: (any ImageDescribing)? = MockImageDescriber()
+    var contactPhotoProvider: (any ContactPhotoProviding)?
 
     static func mock(delayNanoseconds: UInt64 = 55_000_000) -> AppDependencies {
         let dataset = MockAppDataset.rich

@@ -48,7 +48,8 @@ extension AppDependencies {
             messagingActions: messagingActions,
             settingsStore: UserDefaultsSettingsStore(),
             messageSender: messagingActions,
-            imageDescriber: VisionImageDescriptionService()
+            imageDescriber: VisionImageDescriptionService(),
+            contactPhotoProvider: contacts
         )
     }
 
@@ -113,9 +114,12 @@ private struct RepositorySearchIndexCorpusProvider: SearchIndexCorpusProviding {
     let conversations: any ConversationRepository
     let messages: any MessageRepository
     let contacts: any ContactProviding
+    // Index only recent conversations with bounded history for now so the
+    // background indexer stays cheap on large Messages libraries.
     var conversationPageSize = 400
+    var maxConversations = 10
     var messagePageSize = 500
-    var maxMessagesPerConversation = 20_000
+    var maxMessagesPerConversation = 500
 
     func searchIndexCorpus() async throws -> SearchIndexCorpus {
         let conversationCorpus = try await loadConversations()
@@ -135,14 +139,14 @@ private struct RepositorySearchIndexCorpusProvider: SearchIndexCorpusProviding {
 
         repeat {
             let page = try await conversations.conversations(
-                page: PageRequest(cursor: cursor, limit: conversationPageSize),
+                page: PageRequest(cursor: cursor, limit: min(conversationPageSize, maxConversations)),
                 filter: ConversationFilter(includeArchived: true)
             )
             allConversations.append(contentsOf: page.items)
-            cursor = page.hasMore ? page.nextCursor : nil
+            cursor = page.hasMore && allConversations.count < maxConversations ? page.nextCursor : nil
         } while cursor != nil
 
-        return allConversations
+        return Array(allConversations.prefix(maxConversations))
     }
 
     private func loadContacts() async throws -> [Contact] {

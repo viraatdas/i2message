@@ -6,40 +6,18 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(
-                    min: I2Layout.sidebarMinWidth,
-                    ideal: I2Layout.sidebarIdealWidth,
-                    max: I2Layout.sidebarMaxWidth
-                )
-        } detail: {
+        HStack(spacing: 0) {
+            if model.sidebarMode != .hidden {
+                SidebarView()
+                    .frame(width: model.sidebarMode == .compact ? I2Layout.compactSidebarWidth : I2Layout.sidebarIdealWidth)
+                    .transition(.move(edge: .leading))
+
+                I2VerticalDivider()
+            }
+
             DetailRouterView()
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    Task { await model.perform(.openSearch) }
-                } label: {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                .help("Open search workspace")
-
-                Button {
-                    model.openCommandPalette()
-                } label: {
-                    Label("Command Palette", systemImage: "command")
-                }
-                .help("Command palette")
-
-                Button {
-                    Task { await model.perform(.newMessage) }
-                } label: {
-                    Label("New Message", systemImage: "square.and.pencil")
-                }
-                .help("New message")
-            }
-        }
+        .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarMode)
         .sheet(isPresented: $model.isSettingsPresented) {
             SettingsView()
                 .environmentObject(model)
@@ -48,6 +26,14 @@ struct ContentView: View {
         .overlay {
             if model.isCommandPalettePresented {
                 CommandPaletteView()
+                    .environmentObject(model)
+                    .transition(.opacity)
+            } else if model.isSearchOverlayPresented {
+                SearchOverlayView()
+                    .environmentObject(model)
+                    .transition(.opacity)
+            } else if model.isReminderPresented {
+                ReminderPanelView()
                     .environmentObject(model)
                     .transition(.opacity)
             }

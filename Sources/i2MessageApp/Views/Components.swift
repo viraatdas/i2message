@@ -3,21 +3,35 @@ import SwiftUI
 import i2MessageCore
 
 struct AvatarView: View {
+    @EnvironmentObject private var model: AppViewModel
     let contact: Contact?
     var size: CGFloat = 34
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(color(for: contact?.avatar?.colorSeed))
+            if let contact,
+               let data = model.contactThumbnails[contact.id],
+               let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else {
+                Circle()
+                    .fill(color(for: contact?.avatar?.colorSeed))
 
-            Text(contact?.avatar?.initials ?? initials)
-                .font(.system(size: max(size * 0.34, 10), weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                Text(contact?.avatar?.initials ?? initials)
+                    .font(.system(size: max(size * 0.34, 10), weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
         }
         .frame(width: size, height: size)
+        .task(id: contact?.id) {
+            model.requestContactThumbnail(for: contact)
+        }
         .accessibilityHidden(true)
     }
 

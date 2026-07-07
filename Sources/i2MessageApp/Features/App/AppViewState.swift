@@ -31,6 +31,23 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
     }
 }
 
+enum SidebarDisplayMode: String, CaseIterable {
+    case full
+    case compact
+    case hidden
+
+    var next: SidebarDisplayMode {
+        switch self {
+        case .full:
+            return .compact
+        case .compact:
+            return .hidden
+        case .hidden:
+            return .full
+        }
+    }
+}
+
 enum ConversationScope: String, CaseIterable, Identifiable {
     case all
     case unread
@@ -122,7 +139,6 @@ struct IndexingProgress: Equatable {
 
 enum AppCommand: String, CaseIterable, Identifiable {
     case newMessage
-    case focusFilter
     case openSearch
     case searchCurrentChat
     case toggleSemantic
@@ -140,8 +156,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newMessage:
             return "New Message"
-        case .focusFilter:
-            return "Focus Sidebar Filter"
         case .openSearch:
             return "Search All Chats"
         case .searchCurrentChat:
@@ -169,8 +183,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newMessage:
             return "Start or hand off a new Messages draft"
-        case .focusFilter:
-            return "Filter conversations and contacts"
         case .openSearch:
             return "Search every conversation at once"
         case .searchCurrentChat:
@@ -196,8 +208,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newMessage:
             return "square.and.pencil"
-        case .focusFilter:
-            return "line.3.horizontal.decrease.circle"
         case .openSearch:
             return "magnifyingglass"
         case .searchCurrentChat:
@@ -225,8 +235,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
         switch self {
         case .newMessage:
             return "⌘N"
-        case .focusFilter:
-            return "⌘⌥F"
         case .openSearch:
             return "⌘⇧P"
         case .searchCurrentChat:

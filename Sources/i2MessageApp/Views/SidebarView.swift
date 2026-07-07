@@ -3,112 +3,36 @@ import i2MessageCore
 
 struct SidebarView: View {
     @EnvironmentObject private var model: AppViewModel
-    @FocusState private var filterFocused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            I2Divider()
-
-            switch model.sidebarDestination {
-            case .conversations:
-                conversationsList
-            case .contacts:
-                contactsList
-            case .search:
-                searchSummaryList
+        Group {
+            if model.sidebarMode == .compact {
+                compactRail
+            } else {
+                fullSidebar
             }
-
-            I2Divider()
-            footer
         }
         .background(I2Palette.sidebarBackground)
-        .onChange(of: model.focusRequest) { _, request in
-            guard request == .sidebarSearch else { return }
-            filterFocused = true
-            model.consumeFocusRequest(.sidebarSearch)
-        }
         .accessibilityElement(children: .contain)
     }
 
-    private var header: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Text(model.sidebarDestination.title)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
+    // MARK: Full sidebar
 
-                Spacer()
-
-                Button {
-                    Task { await model.perform(.newMessage) }
-                } label: {
-                    Label("New Message", systemImage: "square.and.pencil")
-                }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
-                .help("New Message")
-            }
-
-            Picker("Sidebar", selection: $model.sidebarDestination) {
-                ForEach(SidebarDestination.allCases) { destination in
-                    Label(destination.title, systemImage: destination.symbolName)
-                        .tag(destination)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField("Filter", text: $model.quickFilterText)
-                    .textFieldStyle(.plain)
-                    .focused($filterFocused)
-                    .onSubmit {
-                        if model.sidebarDestination == .search {
-                            model.searchQuery = model.quickFilterText
-                            Task { await model.performSearch(reset: true) }
-                        }
-                    }
-                if !model.quickFilterText.isEmpty {
-                    Button {
-                        model.quickFilterText = ""
-                    } label: {
-                        Label("Clear filter", systemImage: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    private var fullSidebar: some View {
+        VStack(spacing: 0) {
+            conversationsList
+            footer
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
     }
 
     private var conversationsList: some View {
-        VStack(spacing: 0) {
-            Picker("Conversation Filter", selection: $model.conversationScope) {
-                ForEach(ConversationScope.allCases) { scope in
-                    Text(scope.title).tag(scope)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-
+        Group {
             if model.conversationPhase == .loading {
                 ConversationSkeletonList()
             } else if model.filteredConversations.isEmpty {
                 EmptyStateView(
                     title: "No conversations",
-                    message: "Try another filter or search term.",
+                    message: "Recent conversations appear here.",
                     systemImage: "message"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -132,96 +56,105 @@ struct SidebarView: View {
         }
     }
 
-    private var contactsList: some View {
-        Group {
-            if model.contactPhase == .loading {
-                ConversationSkeletonList()
-            } else if model.filteredContacts.isEmpty {
-                EmptyStateView(
-                    title: "No contacts",
-                    message: "Try a name, phone number, or email address.",
-                    systemImage: "person.crop.circle.badge.questionmark"
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(18)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(model.filteredContacts) { contact in
-                            ContactSidebarRow(
-                                contact: contact,
-                                isSelected: contact.id == model.selectedContactID
-                            ) {
-                                model.selectContact(contact.id)
-                            }
+    // MARK: Compact rail
+
+    private var compactRail: some View {
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 6) {
+                    ForEach(model.filteredConversations) { conversation in
+                        CompactConversationButton(
+                            conversation: conversation,
+                            isSelected: conversation.id == model.selectedConversationID
+                        ) {
+                            Task { await model.selectConversation(conversation.id) }
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
                 }
+                .padding(.vertical, 10)
+            }
+
+            if needsAttention {
+                attentionDot
+                    .padding(.bottom, 10)
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
-    private var searchSummaryList: some View {
-        VStack(spacing: 0) {
-            I2SectionLabel(title: "Search", trailing: model.searchResultCountLabel)
+    // MARK: Footer (only surfaces problems)
 
-            VStack(alignment: .leading, spacing: 8) {
-                TextField("Exact phrase or semantic intent", text: $model.searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        Task { await model.performSearch(reset: true) }
-                    }
-
-                Picker("Mode", selection: $model.searchMode) {
-                    Text("Exact").tag(SearchMode.exact)
-                    Text("Semantic").tag(SearchMode.semantic)
-                    Text("Hybrid").tag(SearchMode.hybrid)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .onChange(of: model.searchMode) { _, mode in
-                    Task { await model.setSearchMode(mode) }
-                }
-
-                Button {
-                    Task { await model.performSearch(reset: true) }
-                } label: {
-                    Label("Search", systemImage: model.searchMode == .semantic ? "sparkles" : "magnifyingglass")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 10)
-
-            SearchMiniResults()
-        }
-    }
-
+    @ViewBuilder
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if model.isOffline {
-                HStack(spacing: 8) {
-                    Image(systemName: "wifi.slash")
-                        .foregroundStyle(.orange)
-                    Text("Offline cache")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
+        let pending = attentionPermissions
+        if model.isOffline || model.indexingProgress.isIndexing || !pending.isEmpty {
+            I2Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                if model.isOffline {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash")
+                            .foregroundStyle(.orange)
+                        Text("Offline cache")
+                            .font(.caption)
+                        Spacer()
+                    }
                 }
-                .padding(.horizontal, 10)
-                .padding(.top, 2)
-            }
 
-            IndexingStatusView(progress: model.indexingProgress)
-            PermissionsMiniFooter(snapshot: model.permissionSnapshot) { permission in
-                Task { await model.requestPermission(permission) }
+                if model.indexingProgress.isIndexing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Indexing recent chats…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
+
+                ForEach(pending) { status in
+                    HStack(spacing: 8) {
+                        PermissionStateIcon(state: status.state)
+                        Text(status.permission.displayName)
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Button {
+                            Task { await model.requestPermission(status.permission) }
+                        } label: {
+                            Text("Fix")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Request \(status.permission.displayName)")
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
-            ActionAvailabilityFooter(snapshot: model.actionAvailabilitySnapshot)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
         }
-        .padding(10)
+    }
+
+    private var attentionPermissions: [PermissionStatus] {
+        model.permissionSnapshot.statuses.filter { status in
+            (status.permission == .fullDiskAccess || status.permission == .contacts)
+                && status.state != .granted
+        }
+    }
+
+    private var needsAttention: Bool {
+        !attentionPermissions.isEmpty
+    }
+
+    private var attentionDot: some View {
+        Button {
+            model.isSettingsPresented = true
+        } label: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+        }
+        .buttonStyle(.borderless)
+        .help("Permissions need attention")
     }
 }
 
@@ -232,25 +165,18 @@ private struct ConversationRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 AvatarStack(contacts: conversation.participants.filter { !$0.isCurrentUser }, size: 34)
-                    .padding(.top, 2)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(conversation.title)
-                            .font(.body.weight(conversation.unreadCount > 0 ? .semibold : .medium))
+                            .font(.body.weight(conversation.unreadCount > 0 ? .semibold : .regular))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
                         if conversation.pinnedRank != nil {
                             Image(systemName: "pin.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if conversation.isMuted {
-                            Image(systemName: "bell.slash")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -263,18 +189,11 @@ private struct ConversationRow: View {
                             .monospacedDigit()
                     }
 
-                    Text(conversation.lastMessage?.text ?? "No messages yet")
-                        .font(.callout)
-                        .foregroundStyle(conversation.unreadCount > 0 ? .primary : .secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
                     HStack(spacing: 6) {
-                        I2Pill(title: conversation.service.rawValue, tint: .secondary)
-
-                        if conversation.lastMessage?.hasAttachments == true {
-                            I2Pill(title: "File", systemImage: "paperclip", tint: .secondary)
-                        }
+                        Text(conversation.lastMessage?.text.isEmpty == false ? conversation.lastMessage!.text : "No messages yet")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
 
                         Spacer(minLength: 4)
 
@@ -284,11 +203,11 @@ private struct ConversationRow: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: I2Layout.rowHeight, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(isSelected ? I2Palette.selectionFill : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(isSelected ? I2Palette.selectionFill : Color.clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -302,263 +221,28 @@ private struct ConversationRow: View {
     }
 }
 
-private struct ContactSidebarRow: View {
-    let contact: Contact
+private struct CompactConversationButton: View {
+    let conversation: Conversation
     let isSelected: Bool
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                AvatarView(contact: contact, size: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(contact.displayName)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(contact.handles.first?.value ?? "No handle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            AvatarStack(contacts: Array(conversation.participants.filter { !$0.isCurrentUser }.prefix(1)), size: 36)
+                .overlay(alignment: .topTrailing) {
+                    if conversation.unreadCount > 0 {
+                        Circle()
+                            .fill(Color.accentColor)
+                            .frame(width: 10, height: 10)
+                            .offset(x: 2, y: -2)
+                    }
                 }
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(isSelected ? I2Palette.selectionFill : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(5)
+                .background(isSelected ? I2Palette.selectionFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
+        .help(conversation.title)
+        .accessibilityLabel(conversation.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private struct SearchMiniResults: View {
-    @EnvironmentObject private var model: AppViewModel
-
-    var body: some View {
-        Group {
-            if model.searchPhase == .loading {
-                ConversationSkeletonList()
-            } else if model.searchPhase == .idle {
-                EmptyStateView(
-                    title: "Search locally",
-                    message: "Run exact phrase search or semantic search without leaving the app.",
-                    systemImage: "magnifyingglass"
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.searchMode == .semantic {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(model.semanticSnippets.prefix(8)) { snippet in
-                            Button {
-                                Task { await model.openSemanticSnippet(snippet) }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(model.conversationTitle(for: snippet.conversationID))
-                                            .font(.callout.weight(.semibold))
-                                            .lineLimit(1)
-                                        Spacer()
-                                        Text("\(Int(snippet.similarity * 100))%")
-                                            .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(snippet.text)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(9)
-                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(model.exactSearchResults.prefix(10)) { result in
-                            Button {
-                                Task { await model.openSearchResult(result) }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(result.title)
-                                        .font(.callout.weight(.semibold))
-                                        .lineLimit(1)
-                                    Text(result.snippet)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(9)
-                                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                }
-            }
-        }
-    }
-}
-
-private struct PermissionsMiniFooter: View {
-    let snapshot: PermissionSnapshot
-    let requestPermission: (AppPermission) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(snapshot.statuses.prefix(3)) { status in
-                HStack(spacing: 8) {
-                    PermissionStateIcon(state: status.state)
-
-                    Text(status.permission.displayName)
-                        .font(.caption)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    Text(status.state.shortLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-
-                    if status.state != .granted {
-                        Button {
-                            requestPermission(status.permission)
-                        } label: {
-                            Image(systemName: "arrow.up.right.circle")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Open or request \(status.permission.displayName)")
-                        .accessibilityLabel("Request \(status.permission.displayName)")
-                    }
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-}
-
-private struct ActionAvailabilityFooter: View {
-    let snapshot: MessagingActionAvailabilitySnapshot
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "checklist.checked")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
-
-                Text("Parity")
-                    .font(.caption.weight(.medium))
-
-                Spacer()
-
-                Text("\(availableCount)/\(snapshot.statuses.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            if let attentionStatus {
-                HStack(spacing: 8) {
-                    Image(systemName: iconName(for: attentionStatus.state))
-                        .foregroundStyle(color(for: attentionStatus.state))
-                        .frame(width: 16)
-
-                    Text(attentionStatus.kind.displayName)
-                        .font(.caption)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
-
-                    Text(attentionStatus.state.shortLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
-        .padding(.horizontal, 4)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var availableCount: Int {
-        snapshot.statuses.filter { $0.state == .available }.count
-    }
-
-    private var attentionStatus: MessagingActionAvailability? {
-        snapshot.statuses.first { $0.state != .available }
-    }
-
-    private func iconName(for state: MessagingActionAvailabilityState) -> String {
-        switch state {
-        case .available:
-            return "checkmark.circle.fill"
-        case .requiresPermission, .requiresUserHandoff, .degraded:
-            return "exclamationmark.circle"
-        case .unsupported:
-            return "slash.circle"
-        case .unavailable:
-            return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private func color(for state: MessagingActionAvailabilityState) -> Color {
-        switch state {
-        case .available:
-            return .green
-        case .requiresPermission, .requiresUserHandoff, .degraded:
-            return .orange
-        case .unsupported:
-            return .secondary
-        case .unavailable:
-            return .red
-        }
-    }
-}
-
-private extension PermissionState {
-    var shortLabel: String {
-        switch self {
-        case .notDetermined:
-            return "Needed"
-        case .granted:
-            return "On"
-        case .denied:
-            return "Off"
-        case .restricted:
-            return "Limited"
-        case .unsupported:
-            return "N/A"
-        }
-    }
-}
-
-private extension MessagingActionAvailabilityState {
-    var shortLabel: String {
-        switch self {
-        case .available:
-            return "On"
-        case .requiresPermission:
-            return "Needs OK"
-        case .requiresUserHandoff:
-            return "Handoff"
-        case .degraded:
-            return "Partial"
-        case .unsupported:
-            return "N/A"
-        case .unavailable:
-            return "Off"
-        }
     }
 }
