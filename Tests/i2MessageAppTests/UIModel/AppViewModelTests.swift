@@ -128,6 +128,55 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(model.currentReplyTarget)
     }
 
+    func testNewMessageStagesPendingConversationForRawHandle() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        model.openNewMessage()
+        XCTAssertTrue(model.isNewMessagePresented)
+        XCTAssertEqual(model.focusRequest, .newMessageRecipient)
+
+        await model.startConversation(withHandle: "+15551234567")
+
+        XCTAssertFalse(model.isNewMessagePresented)
+        let pending = try XCTUnwrap(model.pendingNewConversation)
+        XCTAssertEqual(pending.handles.first?.value, "+15551234567")
+        XCTAssertEqual(model.selectedConversation?.id, AppViewModel.pendingConversationID)
+        XCTAssertEqual(model.selectedConversation?.title, "+15551234567")
+        XCTAssertTrue(model.selectedMessages.isEmpty)
+    }
+
+    func testPendingConversationSendClearsStagingAndReloads() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        await model.startConversation(withHandle: "friend@example.com")
+        XCTAssertNotNil(model.pendingNewConversation)
+
+        model.updateDraftText("First hello")
+        await model.sendCurrentDraft()
+
+        XCTAssertNil(model.pendingNewConversation)
+        XCTAssertNotEqual(model.selectedConversationID, AppViewModel.pendingConversationID)
+        XCTAssertNil(model.transcriptPages[AppViewModel.pendingConversationID])
+    }
+
+    func testInfoPanelCollectsSharedMediaAndLinks() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let conversationID = try XCTUnwrap(model.selectedConversationID)
+        let expectedMedia = model.dependencies.seed.messagesByConversation[conversationID, default: []]
+            .flatMap(\.attachments)
+            .filter { $0.kind == .image || $0.kind == .video }
+
+        await model.openInfoPanel()
+
+        XCTAssertTrue(model.isInfoPanelPresented)
+        XCTAssertNotEqual(model.infoPanelPhase, .loading)
+        XCTAssertEqual(model.infoPanelMedia.count, expectedMedia.count)
+    }
+
     func testToggleReactionAddsAndRemovesTapback() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()

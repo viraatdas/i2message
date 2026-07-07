@@ -83,6 +83,27 @@ enum FocusRequest: Equatable {
     case searchField
     case composer
     case commandPalette
+    case newMessageRecipient
+}
+
+/// A conversation staged by Cmd+N that has no row in Messages yet; the first
+/// sent message is addressed to `handles` and creates the real thread.
+struct PendingNewConversation: Equatable {
+    var conversation: Conversation
+    var handles: [ContactHandle]
+}
+
+/// A link discovered inside a conversation's messages, shown in the Cmd+I info panel.
+struct SharedLink: Identifiable, Equatable {
+    var url: URL
+    var sentAt: Date
+    var id: String { url.absoluteString }
+
+    var displayTitle: String {
+        url.host.map { host in
+            host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        } ?? url.absoluteString
+    }
 }
 
 struct StatusBanner: Identifiable, Equatable {

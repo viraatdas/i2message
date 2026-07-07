@@ -37,6 +37,18 @@ final class AppViewModel: ObservableObject {
     @Published var isCommandPalettePresented = false
     @Published var isSearchOverlayPresented = false
     @Published var isReminderPresented = false
+
+    @Published var isNewMessagePresented = false
+    @Published var newMessageQuery = ""
+    @Published private(set) var newMessageSuggestions: [Contact] = []
+    @Published private(set) var pendingNewConversation: PendingNewConversation?
+
+    @Published var isInfoPanelPresented = false
+    @Published private(set) var infoPanelPhase: UIContentPhase = .idle
+    @Published private(set) var infoPanelMedia: [MessageAttachment] = []
+    @Published private(set) var infoPanelLinks: [SharedLink] = []
+    private var infoPanelConversationID: ConversationID?
+
     private var locallyUnreadIDs: Set<ConversationID> = []
     @Published var isSettingsPresented = false
     @Published private(set) var focusRequest: FocusRequest?
@@ -80,6 +92,9 @@ final class AppViewModel: ObservableObject {
     }
 
     var selectedConversation: Conversation? {
+        if let pending = pendingNewConversation, selectedConversationID == pending.conversation.id {
+            return pending.conversation
+        }
         guard let selectedConversationID else {
             return filteredConversations.first
         }
@@ -281,6 +296,9 @@ final class AppViewModel: ObservableObject {
 
     func selectConversation(_ id: ConversationID, highlightedMessageID: MessageID? = nil) async {
         sidebarDestination = .conversations
+        if let pending = pendingNewConversation, pending.conversation.id != id {
+            pendingNewConversation = nil
+        }
         selectedConversationID = id
         clearLocalUnread(for: id)
         self.highlightedMessageID = highlightedMessageID
@@ -348,7 +366,7 @@ final class AppViewModel: ObservableObject {
         isReminderPresented = false
     }
 
-    /// Cmd+I: schedule a local notification that brings the user back to the
+    /// Cmd+R: schedule a local notification that brings the user back to the
     /// selected chat after the chosen delay.
     func scheduleReminder(after interval: TimeInterval, label: String) async {
         guard let conversation = selectedConversation else {
@@ -387,6 +405,193 @@ final class AppViewModel: ObservableObject {
         } catch {
             showBanner(tone: .error, title: "Could not set reminder", message: error.localizedDescription)
         }
+    }
+
+    // MARK: - New message (Cmd+N)
+
+    /// Cmd+N: open the in-app recipient picker instead of handing off to
+    /// Messages.app, so a new conversation starts in the same window.
+    func openNewMessage() {
+        newMessageQuery = ""
+        newMessageSuggestions = defaultRecipientSuggestions()
+        isNewMessagePresented = true
+        isCommandPalettePresented = false
+        isSearchOverlayPresented = false
+        focusRequest = .newMessageRecipient
+    }
+
+    func closeNewMessage() {
+        isNewMessagePresented = false
+        newMessageQuery = ""
+        newMessageSuggestions = []
+    }
+
+    /// Live-searches the full address book (falling back to loaded contacts)
+    /// for the recipient picker.
+    func updateNewMessageQuery(_ text: String) async {
+        newMessageQuery = text
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            newMessageSuggestions = defaultRecipientSuggestions()
+            return
+        }
+
+        if dependencies.isLiveData {
+            if let page = try? await dependencies.contactProvider.contacts(matching: trimmed, page: PageRequest(limit: 12)) {
+                let matches = page.items.filter { !$0.isCurrentUser }
+                if !matches.isEmpty {
+                    newMessageSuggestions = matches
+                    return
+                }
+            }
+        }
+
+        newMessageSuggestions = contacts
+            .filter { contact in
+                contact.displayName.localizedCaseInsensitiveContains(trimmed)
+                    || contact.handles.contains { $0.value.localizedCaseInsensitiveContains(trimmed) }
+            }
+            .prefix(12)
+            .map { $0 }
+    }
+
+    private func defaultRecipientSuggestions() -> [Contact] {
+        Array(filteredContacts.prefix(8))
+    }
+
+    /// Opens an existing thread with the contact if one is loaded, otherwise
+    /// stages a pending conversation that sends to their handle on the first message.
+    func startConversation(with contact: Contact) async {
+        closeNewMessage()
+
+        if let existing = conversations.first(where: { conversation in
+            conversation.kind != .group && conversation.participants.contains { $0.id == contact.id }
+        }) {
+            await selectConversation(existing.id)
+            focusRequest = .composer
+            return
+        }
+
+        guard let handle = contact.handles.first else {
+            showBanner(tone: .warning, title: "No address", message: "\(contact.displayName) has no phone number or email to message.")
+            return
+        }
+
+        stagePendingConversation(title: contact.displayName, participants: [contact], handles: [handle])
+    }
+
+    /// Starts a pending conversation to a raw handle the user typed that does
+    /// not match a known contact.
+    func startConversation(withHandle raw: String) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        closeNewMessage()
+
+        let isEmail = trimmed.contains("@")
+        let handle = ContactHandle(
+            value: trimmed,
+            normalizedValue: trimmed.lowercased(),
+            kind: isEmail ? .emailAddress : .phoneNumber,
+            service: isEmail ? .iMessage : .unknown
+        )
+        stagePendingConversation(title: trimmed, participants: [], handles: [handle])
+    }
+
+    private func stagePendingConversation(title: String, participants: [Contact], handles: [ContactHandle]) {
+        let conversation = Conversation(
+            id: Self.pendingConversationID,
+            title: title,
+            participants: participants,
+            kind: .direct,
+            service: handles.first?.service ?? .iMessage,
+            updatedAt: Date()
+        )
+        pendingNewConversation = PendingNewConversation(conversation: conversation, handles: handles)
+        transcriptPages[Self.pendingConversationID] = .empty
+        draftTexts[Self.pendingConversationID] = ""
+        draftAttachments[Self.pendingConversationID] = []
+        sidebarDestination = .conversations
+        selectedConversationID = Self.pendingConversationID
+        focusRequest = .composer
+    }
+
+    static let pendingConversationID = ConversationID(rawValue: "pending.new.conversation")
+
+    // MARK: - Chat info (Cmd+I)
+
+    /// Cmd+I: reveal shared photos and links for the selected chat. Fetches a
+    /// wide page of history so media outside the visible transcript is included.
+    func openInfoPanel() async {
+        guard let conversation = selectedConversation else {
+            return
+        }
+        isInfoPanelPresented = true
+        if infoPanelConversationID == conversation.id, infoPanelPhase == .loaded {
+            return
+        }
+        infoPanelConversationID = conversation.id
+        infoPanelPhase = .loading
+        infoPanelMedia = []
+        infoPanelLinks = []
+
+        let messages = await gatherConversationMessages(conversation.id)
+        let media = messages
+            .flatMap { $0.attachments }
+            .filter { $0.kind == .image || $0.kind == .video }
+        let links = Self.extractLinks(from: messages)
+
+        // Bail out if the user moved on while we were loading.
+        guard isInfoPanelPresented, infoPanelConversationID == conversation.id else {
+            return
+        }
+        infoPanelMedia = media.reversed()
+        infoPanelLinks = links
+        infoPanelPhase = (media.isEmpty && links.isEmpty) ? .empty : .loaded
+    }
+
+    func closeInfoPanel() {
+        isInfoPanelPresented = false
+    }
+
+    /// Best-effort collection of a conversation's messages for the info panel:
+    /// tries a wide live page, falls back to fixtures, then to what's loaded.
+    private func gatherConversationMessages(_ id: ConversationID) async -> [Message] {
+        if let pending = pendingNewConversation, pending.conversation.id == id {
+            return []
+        }
+        if dependencies.isLiveData, !(transcriptPages[id]?.usesFixtureData ?? false) {
+            if let page = try? await dependencies.messageRepository.messages(
+                in: id,
+                page: PageRequest(limit: 400, direction: .older),
+                around: nil
+            ), !page.items.isEmpty {
+                return page.items.sorted { $0.sentAt < $1.sentAt }
+            }
+        }
+        if let seeded = dependencies.seed.messagesByConversation[id], !seeded.isEmpty {
+            return seeded
+        }
+        return transcriptPages[id]?.messages ?? []
+    }
+
+    private static func extractLinks(from messages: [Message]) -> [SharedLink] {
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return []
+        }
+        var seen = Set<String>()
+        var links: [SharedLink] = []
+        for message in messages.sorted(by: { $0.sentAt > $1.sentAt }) {
+            let text = message.body.plainText
+            guard !text.isEmpty else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            detector.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+                guard let url = match?.url else { return }
+                let key = url.absoluteString
+                guard seen.insert(key).inserted else { return }
+                links.append(SharedLink(url: url, sentAt: message.sentAt))
+            }
+        }
+        return links
     }
 
     /// Most recent conversation activity involving this contact, including
@@ -674,11 +879,18 @@ final class AppViewModel: ObservableObject {
             return
         }
         let replyTargetID = replyTargets[selectedConversationID]
+        let isPending = pendingNewConversation?.conversation.id == selectedConversationID
+        let target: SendTarget
+        if let pending = pendingNewConversation, isPending {
+            target = .handles(pending.handles)
+        } else {
+            target = .existingConversation(selectedConversationID)
+        }
         let draft = MessageDraft(
-            target: .existingConversation(selectedConversationID),
+            target: target,
             text: currentDraftText,
             attachments: currentDraftAttachments,
-            replyToMessageID: replyTargetID,
+            replyToMessageID: isPending ? nil : replyTargetID,
             requestedService: selectedConversation?.service
         )
 
@@ -694,13 +906,22 @@ final class AppViewModel: ObservableObject {
                 receipt = try await dependencies.messageSender.send(draft)
             }
             AppDiagnostics.operation("send_message", state: "accepted")
-            appendSentMessage(receipt: receipt, draft: draft)
+            if !isPending {
+                appendSentMessage(receipt: receipt, draft: draft)
+            }
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
             replyTargets[selectedConversationID] = nil
             sendOperation = nil
             try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
-            if dependencies.isLiveData {
+            if isPending {
+                pendingNewConversation = nil
+                transcriptPages[Self.pendingConversationID] = nil
+                await loadConversations()
+                if let realID = receipt.conversationID ?? conversations.first?.id {
+                    await selectConversation(realID)
+                }
+            } else if dependencies.isLiveData {
                 scheduleTranscriptReload()
             }
             showBanner(
@@ -933,13 +1154,7 @@ final class AppViewModel: ObservableObject {
     func perform(_ command: AppCommand) async {
         switch command {
         case .newMessage:
-            if dependencies.isLiveData {
-                await openNewConversationHandoff()
-            } else {
-                sidebarDestination = .conversations
-                focusRequest = .composer
-                showBanner(tone: .info, title: "New message", message: "Fixture composer is ready for the selected conversation.")
-            }
+            openNewMessage()
         case .openSearch:
             openSearchOverlay(scopedToCurrentConversation: false)
         case .searchCurrentChat:

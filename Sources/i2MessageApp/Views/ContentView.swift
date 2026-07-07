@@ -32,6 +32,14 @@ struct ContentView: View {
                 SearchOverlayView()
                     .environmentObject(model)
                     .transition(.opacity)
+            } else if model.isNewMessagePresented {
+                NewMessageOverlayView()
+                    .environmentObject(model)
+                    .transition(.opacity)
+            } else if model.isInfoPanelPresented {
+                InfoPanelView()
+                    .environmentObject(model)
+                    .transition(.opacity)
             } else if model.isReminderPresented {
                 ReminderPanelView()
                     .environmentObject(model)

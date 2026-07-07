@@ -5,28 +5,18 @@ import i2MessageCore
 
 struct ConversationDetailView: View {
     @EnvironmentObject private var model: AppViewModel
-    @State private var showsInspector = true
 
     var body: some View {
         Group {
             if let conversation = model.selectedConversation {
                 VStack(spacing: 0) {
-                    ConversationHeader(conversation: conversation, showsInspector: $showsInspector)
+                    ConversationHeader(conversation: conversation)
                     I2Divider()
 
-                    HStack(spacing: 0) {
-                        VStack(spacing: 0) {
-                            TranscriptView(conversation: conversation)
-                            I2Divider()
-                            ComposerView(conversation: conversation)
-                        }
-
-                        if showsInspector {
-                            I2VerticalDivider()
-                            ConversationInspector(conversation: conversation)
-                                .frame(width: I2Layout.inspectorWidth)
-                                .transition(.move(edge: .trailing).combined(with: .opacity))
-                        }
+                    VStack(spacing: 0) {
+                        TranscriptView(conversation: conversation)
+                        I2Divider()
+                        ComposerView(conversation: conversation)
                     }
                 }
             } else {
@@ -45,7 +35,6 @@ struct ConversationDetailView: View {
 private struct ConversationHeader: View {
     @EnvironmentObject private var model: AppViewModel
     let conversation: Conversation
-    @Binding var showsInspector: Bool
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -71,34 +60,6 @@ private struct ConversationHeader: View {
             }
 
             Spacer(minLength: 12)
-
-            Menu {
-                Button {
-                    Task { await model.perform(.searchCurrentChat) }
-                } label: {
-                    Label("Search This Chat", systemImage: "magnifyingglass")
-                }
-
-                Button {
-                    Task { await model.openSelectedConversationInMessages() }
-                } label: {
-                    Label("Open in Messages", systemImage: "arrow.up.forward.app")
-                }
-
-                Divider()
-
-                Button {
-                    showsInspector.toggle()
-                } label: {
-                    Label(showsInspector ? "Hide Details" : "Show Details", systemImage: "info.circle")
-                }
-            } label: {
-                Label("More", systemImage: "ellipsis")
-            }
-            .buttonStyle(.borderless)
-            .labelStyle(.iconOnly)
-            .menuIndicator(.hidden)
-            .help("Chat actions")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -583,96 +544,6 @@ private struct ComposerView: View {
             composerFocused = true
             model.consumeFocusRequest(.composer)
         }
-    }
-}
-
-private struct ConversationInspector: View {
-    @EnvironmentObject private var model: AppViewModel
-    let conversation: Conversation
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 10) {
-                    I2SectionLabel(title: "Participants")
-                        .padding(.horizontal, -14)
-                    ForEach(conversation.participants.filter { !$0.isCurrentUser }) { contact in
-                        HStack(spacing: 9) {
-                            AvatarView(contact: contact, size: 28)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(contact.displayName)
-                                    .font(.callout.weight(.medium))
-                                    .lineLimit(1)
-                                Text(contact.handles.first?.value ?? "No handle")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Button {
-                                model.selectContact(contact.id)
-                            } label: {
-                                Label("Open Contact", systemImage: "person.crop.circle")
-                            }
-                            .buttonStyle(.borderless)
-                            .labelStyle(.iconOnly)
-                            .help("Open contact")
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 9) {
-                    I2SectionLabel(title: "Thread State")
-                        .padding(.horizontal, -14)
-                    detailRow("Service", conversation.service.rawValue)
-                    detailRow("Unread", "\(conversation.unreadCount)")
-                    detailRow("Loaded", "\(model.selectedMessages.count) messages")
-                    if let total = model.selectedTranscriptState.totalCount {
-                        detailRow("Total", "\(total) messages")
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    I2SectionLabel(title: "Recent Attachments")
-                        .padding(.horizontal, -14)
-                    let attachments = model.selectedMessages.flatMap(\.attachments).suffix(4)
-                    if attachments.isEmpty {
-                        Text("No attachments in the loaded page.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(attachments)) { attachment in
-                            AttachmentChip(attachment: attachment)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    I2SectionLabel(title: "Privacy")
-                        .padding(.horizontal, -14)
-                    Label("Read-only data boundary", systemImage: "lock")
-                        .font(.caption)
-                    Label("Semantic search is local", systemImage: "sparkles")
-                        .font(.caption)
-                    Label("Message bodies are not logged", systemImage: "eye.slash")
-                        .font(.caption)
-                }
-            }
-            .padding(14)
-        }
-        .background(I2Palette.sidebarBackground)
-    }
-
-    private func detailRow(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .fontWeight(.medium)
-                .lineLimit(1)
-        }
-        .font(.caption)
     }
 }
 

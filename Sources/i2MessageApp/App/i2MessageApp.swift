@@ -60,10 +60,15 @@ struct i2MessageApp: App {
                 }
                 .keyboardShortcut("u", modifiers: [.command])
 
+                Button("Chat Info") {
+                    Task { await model.openInfoPanel() }
+                }
+                .keyboardShortcut("i", modifiers: [.command])
+
                 Button("Remind Me…") {
                     model.openReminderPanel()
                 }
-                .keyboardShortcut("i", modifiers: [.command])
+                .keyboardShortcut("r", modifiers: [.command])
 
                 Button(model.searchMode == .semantic ? "Use Exact Search" : "Use Semantic Search") {
                     Task { await model.perform(.toggleSemantic) }
