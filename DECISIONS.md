@@ -176,6 +176,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Follow-ups:**
   - Update local CoreSimulator install [out of lane] — The warning is unchanged from n9 and did not block macOS generation, tests, or build.
 - **By:** n10 · 2026-07-08T00:22:00Z
+
 ## n10: Resolved the DECISIONS.md jj merge conflict for n10 by
 - **Did:** Resolved the DECISIONS.md jj merge conflict for n10 by keeping one consolidated arbitrary-emoji/custom-reaction decision entry, preserving the safety note and verification record. Verified jj reports no conflicts, ./scripts/generate-xcodeproj.sh passed, ./scripts/test.sh passed, and ./scripts/build.sh passed with the known CoreSimulator warning.
 - **Interfaces:** DECISIONS.md n10 decision log entry only; no code interfaces changed by this conflict resolution.
@@ -183,10 +184,24 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during macOS build/test, though verification passed.
 - **By:** n10 · 2026-07-08T00:23:26.945Z
 
-## n11: Stabilized swipe-to-thread by extracting ThreadSwipeGestureState, passing verti…
-- **Did:** Stabilized swipe-to-thread by extracting ThreadSwipeGestureState, passing vertical and momentum scroll through, enforcing one thread open per gesture, clearing partial swipe state on hover/message/conversation/disappear/end changes, replacing the thread panel move transition with a fixed-width opacity dock, and honoring reduced motion for bubble, panel, and thread auto-scroll movement. Verified generate-xcodeproj, test, build, and mock launch.
-- **Interfaces:** Sources/i2MessageApp/Views/ThreadSwipeGestureState.swift; ThreadPanelDock in ContentView; I2Motion.threadPanel(reduceMotion:); I2Motion.swipeReset(reduceMotion:); I2Layout.hairlineWidth/threadPanelDockWidth; AppViewModel conversation/contact thread reset behavior; ThreadSwipeGestureStateTests; AppViewModelTests.testChangingConversationClosesThreadPanel; docs/ui.md swipe/panel contract; DECISIONS.md n11 entry
+## n11: Stabilized swipe-to-thread and docked thread panel motion
+- **Did:** Replaced ad hoc swipe delta accumulation with `ThreadSwipeGestureState`, which separates horizontal intent from vertical transcript scrolling, passes momentum through, opens at most one thread per gesture, and clears partial state on hover/message/conversation/disappear/end changes. Reworked the thread panel from a trailing move transition to a fixed-width opacity dock, added reduced-motion fallbacks that avoid bubble/panel movement and animated thread auto-scroll, and reset stale thread state when changing conversations or leaving conversation detail.
+- **Interfaces:** `Sources/i2MessageApp/Views/ThreadSwipeGestureState.swift`; `ThreadPanelDock` in `ContentView`; `I2Motion.threadPanel(reduceMotion:)`; `I2Motion.swipeReset(reduceMotion:)`; `I2Layout.hairlineWidth`; `I2Layout.threadPanelDockWidth`; AppViewModel conversation/contact reset behavior; `ThreadSwipeGestureStateTests`; `AppViewModelTests.testChangingConversationClosesThreadPanel`; `docs/ui.md` swipe/panel contract.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, `./scripts/build.sh`, and `./scripts/run-mock-app.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
 - **Follow-ups:**
-  - Update local CoreSimulator install [out of lane] — Xcode still warns CoreSimulator 1051.54.0 is older than build 1051.55.0; macOS generation, tests, build, and mock launch all passed despite it.
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or mock launch.
 - **By:** n11 · 2026-07-08T02:57:15.197Z
+## n11: Resolved the DECISIONS.md 3-sided merge conflict by preserving the
+- **Did:** Resolved the DECISIONS.md 3-sided merge conflict by preserving the n10 arbitrary-emoji/custom-reaction decision history and the n11 swipe/thread-panel stabilization decision, while removing jj conflict marker metadata. Verified jj reports no conflicts, ./scripts/generate-xcodeproj.sh passed, ./scripts/test.sh passed, and ./scripts/build.sh passed.
+- **Interfaces:** DECISIONS.md only; preserved documented n10 EmojiPicker/AppViewModel interfaces and n11 ThreadSwipeGestureState/ThreadPanelDock/I2Motion/I2Layout contracts; no source interfaces changed by this conflict resolution.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — xcodebuild still warns CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS project generation, tests, and build passed.
+- **By:** n11 · 2026-07-08T03:00:04.879Z
+
+## n12: Replaced main transcript broad data-change scrolling with explicit AppViewModel
+- **Did:** Replaced main transcript broad data-change scrolling with explicit AppViewModel scroll intents. Initial/reset loads, search anchors, older-page prepends, and visible local sends now route predictably; live tail refreshes preserve readers; highlighted thread replies remain visible for search while normal thread replies stay folded. Added regression coverage and refreshed UI/performance docs. Verified generate-xcodeproj, full tests, build, and isolated synthetic performance pass.
+- **Interfaces:** TranscriptScrollIntent/TranscriptScrollAnchor/TranscriptScrollReason in AppViewState; AppViewModel.transcriptScrollIntent and visibleTranscriptMessages highlight exception; ConversationDetailView intent-driven ScrollViewReader handling; AppViewModelTests scroll intent regressions; docs/ui.md and docs/performance.md contracts
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during macOS build/test, though all required verification passed.
+- **By:** n12 · 2026-07-08T03:56:12.499Z
 

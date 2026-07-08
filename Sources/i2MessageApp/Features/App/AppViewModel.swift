@@ -247,11 +247,15 @@ final class AppViewModel: ObservableObject {
         await refreshPermissions()
         await loadConversations()
         await loadContacts()
+        let previousSelectedConversationID = selectedConversationID
         if let selectedConversationID, !conversations.contains(where: { $0.id == selectedConversationID }) {
             self.selectedConversationID = conversations.first?.id
             highlightedMessageID = nil
         } else if selectedConversationID == nil {
             selectedConversationID = conversations.first?.id
+        }
+        if previousSelectedConversationID != selectedConversationID {
+            closeThread()
         }
         // The conversation on screen is being read; clear its badge like an
         // explicit selection would.
@@ -326,6 +330,7 @@ final class AppViewModel: ObservableObject {
     func selectContact(_ id: ContactID) {
         sidebarDestination = .contacts
         selectedContactID = id
+        closeThread()
     }
 
     func cycleSidebarMode() {
@@ -750,7 +755,9 @@ final class AppViewModel: ObservableObject {
     func selectAdjacentConversation(offset: Int) async {
         let visible = filteredConversations
         guard !visible.isEmpty else {
+            closeThread()
             selectedConversationID = nil
+            highlightedMessageID = nil
             return
         }
         let currentIndex = selectedConversationID.flatMap { id in

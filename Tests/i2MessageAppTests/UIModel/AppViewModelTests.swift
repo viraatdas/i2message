@@ -158,6 +158,23 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.threadDraftText.isEmpty)
     }
 
+    func testChangingConversationClosesThreadPanel() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        let nextConversation = try XCTUnwrap(model.conversations.first { $0.id != model.selectedConversationID })
+
+        model.openThread(rootID: root.id)
+        model.threadDraftText = "partial reply"
+
+        await model.selectConversation(nextConversation.id)
+
+        XCTAssertFalse(model.isThreadPanelPresented)
+        XCTAssertNil(model.threadRootID)
+        XCTAssertTrue(model.threadDraftText.isEmpty)
+    }
+
     func testEmojiInsertionUpdatesMainAndThreadDraftsIndependently() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
