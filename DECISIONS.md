@@ -168,10 +168,25 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild reports CoreSimulator 1051.54.0 older than build 1051.55.0, though macOS generation, tests, and build still pass.
 - **By:** n9 · 2026-07-08T00:14:54.009Z
 
-## n10: Added native SwiftUI emoji picker controls to main and
-- **Did:** Added native SwiftUI emoji picker controls to main and thread composers with deterministic AppViewModel draft insertion; added fixture-only custom emoji reactions using MessageReactionKind.custom/displayText with live transcript info-banner safety; updated UI docs and tests. Verified ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh passed with the known CoreSimulator warning.
-- **Interfaces:** Sources/i2MessageApp/Views/EmojiPickerControl.swift: EmojiCatalog.normalizedEmoji(from:), EmojiPickerControl, EmojiPickerPopover; AppViewModel insertEmojiInCurrentDraft(_:), insertEmojiInThreadDraft(_:), toggleCustomReaction(_:on:); ConversationDetailView ComposerView/MessageBubble context menu; ThreadPanelView composer; AppViewModelTests coverage; docs/ui.md contract; DECISIONS.md n10 note.
+## n10: Added arbitrary emoji insertion and safe custom reactions
+- **Did:** Added a reusable native SwiftUI emoji popover with common emoji, arbitrary emoji text entry, and macOS Character Viewer handoff; wired explicit emoji insertion into the main composer and thread composer; added fixture-only custom emoji reactions through `MessageReactionKind.custom/displayText`; updated UI-model coverage and docs.
+- **Interfaces:** `Sources/i2MessageApp/Views/EmojiPickerControl.swift` with `EmojiCatalog.normalizedEmoji(from:)`, `EmojiPickerControl`, and `EmojiPickerPopover`; `AppViewModel.insertEmojiInCurrentDraft(_:)`; `AppViewModel.insertEmojiInThreadDraft(_:)`; `AppViewModel.toggleCustomReaction(_:on:)`; composer wiring in `ConversationDetailView` and `ThreadPanelView`; tests in `AppViewModelTests`; docs in `docs/ui.md`.
+- **Safety:** Custom reactions mutate only fixture/fixture-backed transcript state. Real live transcripts show an info banner and leave reactions unchanged, preserving the no-direct-Messages-database-write rule.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, and `./scripts/build.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
 - **Follow-ups:**
-  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0, although macOS generation, tests, and build pass.
-- **By:** n10 · 2026-07-08T00:21:25.429Z
+  - Update local CoreSimulator install [out of lane] — The warning is unchanged from n9 and did not block macOS generation, tests, or build.
+- **By:** n10 · 2026-07-08T00:22:00Z
+## n10: Resolved the DECISIONS.md jj merge conflict for n10 by
+- **Did:** Resolved the DECISIONS.md jj merge conflict for n10 by keeping one consolidated arbitrary-emoji/custom-reaction decision entry, preserving the safety note and verification record. Verified jj reports no conflicts, ./scripts/generate-xcodeproj.sh passed, ./scripts/test.sh passed, and ./scripts/build.sh passed with the known CoreSimulator warning.
+- **Interfaces:** DECISIONS.md n10 decision log entry only; no code interfaces changed by this conflict resolution.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during macOS build/test, though verification passed.
+- **By:** n10 · 2026-07-08T00:23:26.945Z
+
+## n11: Stabilized swipe-to-thread by extracting ThreadSwipeGestureState, passing verti…
+- **Did:** Stabilized swipe-to-thread by extracting ThreadSwipeGestureState, passing vertical and momentum scroll through, enforcing one thread open per gesture, clearing partial swipe state on hover/message/conversation/disappear/end changes, replacing the thread panel move transition with a fixed-width opacity dock, and honoring reduced motion for bubble, panel, and thread auto-scroll movement. Verified generate-xcodeproj, test, build, and mock launch.
+- **Interfaces:** Sources/i2MessageApp/Views/ThreadSwipeGestureState.swift; ThreadPanelDock in ContentView; I2Motion.threadPanel(reduceMotion:); I2Motion.swipeReset(reduceMotion:); I2Layout.hairlineWidth/threadPanelDockWidth; AppViewModel conversation/contact thread reset behavior; ThreadSwipeGestureStateTests; AppViewModelTests.testChangingConversationClosesThreadPanel; docs/ui.md swipe/panel contract; DECISIONS.md n11 entry
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still warns CoreSimulator 1051.54.0 is older than build 1051.55.0; macOS generation, tests, build, and mock launch all passed despite it.
+- **By:** n11 · 2026-07-08T02:57:15.197Z
 

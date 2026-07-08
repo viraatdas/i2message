@@ -902,6 +902,25 @@ final class AppViewModel: ObservableObject {
         draftTexts[selectedConversationID] = text
     }
 
+    func insertEmojiInCurrentDraft(_ rawEmoji: String) {
+        guard let selectedConversationID,
+              let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji)
+        else {
+            return
+        }
+        draftTexts[selectedConversationID, default: ""].append(emoji)
+        focusRequest = .composer
+    }
+
+    func insertEmojiInThreadDraft(_ rawEmoji: String) {
+        guard threadRootID != nil,
+              let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji)
+        else {
+            return
+        }
+        threadDraftText.append(emoji)
+    }
+
     func addMockAttachment() {
         guard let selectedConversationID else {
             return
@@ -1006,6 +1025,44 @@ final class AppViewModel: ObservableObject {
                     kind: kind,
                     senderID: currentUserID,
                     createdAt: Date()
+                )
+            )
+        }
+        transcriptPages[message.conversationID] = state
+    }
+
+    func toggleCustomReaction(_ rawEmoji: String, on message: Message) {
+        guard let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji) else {
+            return
+        }
+        var state = transcriptPages[message.conversationID] ?? .empty
+        guard let index = state.messages.firstIndex(where: { $0.id == message.id }) else {
+            return
+        }
+        guard !dependencies.isLiveData || state.usesFixtureData else {
+            showBanner(
+                tone: .info,
+                title: "Reactions need Messages.app",
+                message: "macOS does not let other apps send custom emoji reactions. Use Open in Messages to react from Messages.app.",
+                actionTitle: nil
+            )
+            return
+        }
+
+        let currentUserID = dependencies.seed.currentUser.id
+        if let existing = state.messages[index].reactions.firstIndex(where: {
+            $0.senderID == currentUserID && $0.kind == .custom && $0.displayText == emoji
+        }) {
+            state.messages[index].reactions.remove(at: existing)
+        } else {
+            state.messages[index].reactions.removeAll { $0.senderID == currentUserID }
+            state.messages[index].reactions.append(
+                MessageReaction(
+                    id: "local.reaction.\(UUID().uuidString)",
+                    kind: .custom,
+                    senderID: currentUserID,
+                    createdAt: Date(),
+                    displayText: emoji
                 )
             )
         }

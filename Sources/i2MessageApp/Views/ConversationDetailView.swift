@@ -326,6 +326,7 @@ private struct MessageBubble: View {
     var isGroupStart: Bool = true
     var isGroupEnd: Bool = true
     @State private var isEditHistoryExpanded = false
+    @State private var isCustomReactionPickerPresented = false
 
     private var isOutgoing: Bool {
         message.direction == .outgoing
@@ -497,6 +498,12 @@ private struct MessageBubble: View {
                         Text("\(ReactionCluster.emoji(for: kind, displayText: nil))  \(ReactionCluster.title(for: kind))")
                     }
                 }
+
+                Button {
+                    isCustomReactionPickerPresented = true
+                } label: {
+                    Label("React with Emoji", systemImage: "face.smiling")
+                }
             }
 
             Divider()
@@ -525,6 +532,16 @@ private struct MessageBubble: View {
                     Label("Add to Calendar", systemImage: "calendar.badge.plus")
                 }
             }
+        }
+        .popover(isPresented: $isCustomReactionPickerPresented, arrowEdge: .top) {
+            EmojiPickerPopover(
+                title: "Reaction emoji",
+                customPlaceholder: "Paste emoji"
+            ) { emoji in
+                model.toggleCustomReaction(emoji, on: message)
+                isCustomReactionPickerPresented = false
+            }
+            .frame(width: 276)
         }
     }
 
@@ -817,6 +834,16 @@ private struct ComposerView: View {
                 .buttonStyle(.borderless)
                 .labelStyle(.iconOnly)
                 .help("Attach file")
+
+                EmojiPickerControl(
+                    accessibilityLabel: "Insert emoji in message composer",
+                    helpText: "Insert emoji",
+                    popoverTitle: "Message emoji",
+                    customPlaceholder: "Paste emoji"
+                ) { emoji in
+                    model.insertEmojiInCurrentDraft(emoji)
+                    composerFocused = true
+                }
 
                 ZStack(alignment: .topLeading) {
                     // Invisible mirror of the draft text so the composer grows
