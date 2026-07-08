@@ -35,6 +35,10 @@ struct SearchOverlayView: View {
         .onAppear {
             searchFocused = true
         }
+        .onDisappear {
+            debounceTask?.cancel()
+            debounceTask = nil
+        }
         .onExitCommand {
             model.closeSearchOverlay()
         }

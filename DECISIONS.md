@@ -198,10 +198,18 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild still warns CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS project generation, tests, and build passed.
 - **By:** n11 · 2026-07-08T03:00:04.879Z
 
-## n12: Replaced main transcript broad data-change scrolling with explicit AppViewModel
-- **Did:** Replaced main transcript broad data-change scrolling with explicit AppViewModel scroll intents. Initial/reset loads, search anchors, older-page prepends, and visible local sends now route predictably; live tail refreshes preserve readers; highlighted thread replies remain visible for search while normal thread replies stay folded. Added regression coverage and refreshed UI/performance docs. Verified generate-xcodeproj, full tests, build, and isolated synthetic performance pass.
-- **Interfaces:** TranscriptScrollIntent/TranscriptScrollAnchor/TranscriptScrollReason in AppViewState; AppViewModel.transcriptScrollIntent and visibleTranscriptMessages highlight exception; ConversationDetailView intent-driven ScrollViewReader handling; AppViewModelTests scroll intent regressions; docs/ui.md and docs/performance.md contracts
+## n12: Replaced broad transcript auto-scroll with explicit scroll intents
+- **Did:** Added `TranscriptScrollIntent` state so the main transcript scrolls only for initial/reset loads, explicit search anchors, older-page preservation, and visible local sends. Older-page prepends now keep the previous top visible message anchored; passive live tail refreshes merge without bottom snapping; highlighted thread replies stay visible for search routing while normal thread replies remain folded out of the main transcript. Resolved the inherited `DECISIONS.md` conflict by preserving n10/n11 entries.
+- **Interfaces:** `TranscriptScrollIntent`, `TranscriptScrollAnchor`, and `TranscriptScrollReason` in `AppViewState`; `AppViewModel.transcriptScrollIntent`; `visibleTranscriptMessages` highlight exception; `ConversationDetailView` scroll-intent handling; UI-model regression coverage in `AppViewModelTests`; updated `docs/ui.md` and `docs/performance.md` scroll contracts.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, `./scripts/build.sh`, and the isolated synthetic performance test passed. Latest synthetic report: launch 0.316s, older-page load 0.0018s, exact search 0.0029s, semantic search 0.356s, transcript route 0.0006s on the 120-conversation/12,000-message fixture. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
 - **Follow-ups:**
-  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during macOS build/test, though all required verification passed.
-- **By:** n12 · 2026-07-08T03:56:12.499Z
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or synthetic performance verification.
+- **By:** n12 · 2026-07-08T03:56:00Z
 
+## n13: Audited and tightened async/UI lifecycle ownership
+- **Did:** Resolved the inherited `DECISIONS.md` conflict by preserving n10/n11/n12 entries, then made AppViewModel-owned observation, indexing, delayed transcript reload, banner dismissal, attachment-description, and contact-thumbnail work explicitly cancellable. Coalesced delayed transcript reloads, guarded concurrent live tail refreshes per conversation, routed manual/background indexing through one generation-guarded task slot, bounded transient attachment/contact/date caches, and added disappear cancellation/cancellation checks for overlay debounce and media thumbnail SwiftUI tasks.
+- **Interfaces:** `AppViewModel` now owns `attachmentDescriptionTasks`, `contactThumbnailTasks`, `transcriptReloadTask`, indexing generations, and per-conversation tail-refresh guards; `MediaThumbnail.load` cancels detached thumbnail work through the caller task; `SearchOverlayView` and `NewMessageOverlayView` cancel debounce tasks on disappear; lifecycle audit notes live in `docs/performance.md`; regression coverage added in `AppViewModelTests`.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, and `./scripts/build.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS project generation, tests, or build.
+- **By:** n13 · 2026-07-08T04:10:00Z

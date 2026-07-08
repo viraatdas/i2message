@@ -11,17 +11,28 @@ enum MediaThumbnail {
         let source = attachment.thumbnailURL ?? attachment.fileURL
         guard let source else { return nil }
         let kind = attachment.kind
-        return await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) { () -> NSImage? in
+            guard !Task.isCancelled else { return nil }
             switch kind {
             case .image, .sticker:
                 guard let raw = NSImage(contentsOf: source) else { return nil }
+                guard !Task.isCancelled else { return nil }
                 return downscale(raw, maxDimension: maxDimension)
             case .video:
-                return videoFrame(source, maxDimension: maxDimension)
+                let frame = videoFrame(source, maxDimension: maxDimension)
+                guard !Task.isCancelled else { return nil }
+                return frame
             default:
                 return nil
             }
-        }.value
+        }
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard !Task.isCancelled else { return nil }
+        return image
     }
 
     private static func downscale(_ image: NSImage, maxDimension: CGFloat) -> NSImage {
@@ -115,7 +126,10 @@ struct InlineAttachmentView: View {
         }
         .help(attachment.filename)
         .task(id: attachment.id) {
+            image = nil
+            loadFailed = false
             let loaded = await MediaThumbnail.load(attachment, maxDimension: 1100)
+            guard !Task.isCancelled else { return }
             if let loaded {
                 image = loaded
             } else {
