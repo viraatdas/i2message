@@ -206,6 +206,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Follow-ups:**
   - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or synthetic performance verification.
 - **By:** n12 · 2026-07-08T03:56:00Z
+
 ## n12: Resolved the n12 jj merge conflict in DECISIONS.md by
 - **Did:** Resolved the n12 jj merge conflict in DECISIONS.md by preserving the finalized n10 emoji picker/custom reaction decision, n11 swipe/thread-panel stabilization decision, and n12 explicit transcript scroll-intent decision. Confirmed jj reports no unresolved conflicts and verified with ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh.
 - **Interfaces:** DECISIONS.md only; preserved documented TranscriptScrollIntent/TranscriptScrollAnchor/TranscriptScrollReason, AppViewModel.transcriptScrollIntent, visibleTranscriptMessages highlight exception, ConversationDetailView scroll-intent handling, n10 EmojiPicker/AppViewModel emoji interfaces, and n11 ThreadSwipeGestureState/ThreadPanelDock/I2Motion/I2Layout contracts.
@@ -213,10 +214,23 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode continues to warn that CoreSimulator 1051.54.0 is older than build 1051.55.0, though generation, tests, and build passed.
 - **By:** n12 · 2026-07-08T03:59:14.064Z
 
-## n13: Audited async/UI lifecycle paths, resolved inherited DECISIONS conflict, added
+## n13: Audited and tightened async/UI lifecycle ownership
 - **Did:** Audited async/UI lifecycle paths, resolved inherited DECISIONS conflict, added explicit cancellation for AppViewModel observation/indexing/delayed reload/banner/attachment/contact tasks, coalesced transcript tail refresh work, bounded transient caches, tightened SwiftUI thumbnail and overlay debounce cancellation, added lifecycle regression tests and docs note, and verified generate-xcodeproj/test/build pass with only the known CoreSimulator warning.
 - **Interfaces:** AppViewModel task ownership: attachmentDescriptionTasks, contactThumbnailTasks, transcriptReloadTask, indexingTaskGeneration, refreshingTranscriptTailConversationIDs; MediaThumbnail.load cancellation behavior; SearchOverlayView/NewMessageOverlayView onDisappear debounce cancellation; AppViewModelTests lifecycle mocks and regressions; docs/performance.md Lifecycle Audit; DECISIONS.md n13 record.
 - **Follow-ups:**
   - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during generation/test/build, though all required commands passed.
 - **By:** n13 · 2026-07-08T04:10:25.034Z
+## n13: Resolved the 5-sided DECISIONS.md jj conflict by preserving n10/n11/n12
+- **Did:** Resolved the 5-sided DECISIONS.md jj conflict by preserving n10/n11/n12 decision history plus the n13 lifecycle-audit record and removing conflict/diff metadata. Verified no jj conflicts remain; generate-xcodeproj, test, and build passed with the known CoreSimulator warning.
+- **Interfaces:** DECISIONS.md decision log only; preserved AppViewModel lifecycle task ownership, MediaThumbnail cancellation, overlay debounce cancellation, docs/performance.md lifecycle audit, and AppViewModelTests regression notes.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still warns CoreSimulator 1051.54.0 is older than build 1051.55.0, though generation, tests, and build passed.
+- **By:** n13 · 2026-07-08T04:15:20.323Z
+
+## n14: Final integration QA passed. Resolved the remaining DECISIONS.md conflict,
+- **Did:** Final integration QA passed. Resolved the remaining DECISIONS.md conflict, documented n14 closeout, tightened thread panel accessibility labels/hints, removed a swipe reset Swift warning, verified no stale inline-reply UI strings or sensitive logging calls in changed files, and ran generation/build/test/mock launch successfully.
+- **Interfaces:** DECISIONS.md; ThreadPanelView thread composer/send/close accessibility labels and hints; ConversationDetailView resetSwipeState explicit resetGesture discard; existing AppViewModel/EmojiPicker/ThreadSwipeGestureState/TranscriptScrollIntent/lifecycle task-ownership contracts preserved.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode continues to warn CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS generation, build, tests, and mock launch all passed.
+- **By:** n14 · 2026-07-08T04:22:31.956Z
 

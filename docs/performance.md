@@ -41,6 +41,14 @@ The benchmark writes a generated report to `build/performance/app-synthetic-resu
 - The repository-backed search corpus currently materializes messages per conversation during background indexing. This keeps launch fast, but very large accounts should tune `RepositorySearchIndexCorpusProvider` chunking before raising fixture sizes by orders of magnitude.
 - Real Messages permissions cannot be fully automated in CI; Full Disk Access and Automation prompts require manual local QA.
 
+## Lifecycle Audit
+
+- `AppViewModel` owns and cancels long-lived observation, indexing, delayed transcript reload, banner dismissal, attachment description, and contact thumbnail tasks in `deinit`.
+- Live transcript tail refreshes are guarded per conversation so observation updates and delayed send reloads do not duplicate repository work.
+- Attachment descriptions, contact thumbnail results/misses, and date mention detection are bounded transient caches.
+- SwiftUI-owned thumbnail and overlay debounce tasks cancel on disappearance and check cancellation before mutating view state.
+- The transcript swipe monitor is installed only while the transcript is visible and removed on disappear.
+
 ## Manual Smoke Checklist
 
 Run automated verification first:

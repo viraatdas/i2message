@@ -501,6 +501,97 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(description.isEmpty)
     }
 
+    func testAttachmentDescriptionTaskCancelsWhenModelDeinitializes() async throws {
+        var dependencies = AppDependencies.test()
+        let describer = CancellableImageDescriber()
+        dependencies.imageDescriber = describer
+
+        let imageMessage = try XCTUnwrap(
+            dependencies.seed.allMessages
+                .first { message in message.attachments.contains { $0.kind == .image } }
+        )
+        let imageAttachment = try XCTUnwrap(imageMessage.attachments.first { $0.kind == .image })
+
+        var model: AppViewModel? = AppViewModel(dependencies: dependencies)
+        let weakModel = WeakBox(model)
+
+        model?.requestAttachmentDescription(for: imageAttachment, in: imageMessage)
+        await describer.waitForStarts(1)
+
+        model = nil
+
+        XCTAssertNil(weakModel.value)
+        await describer.waitForCancellations(1)
+        let counts = await describer.counts()
+        XCTAssertEqual(counts.cancelled, 1)
+        XCTAssertEqual(counts.completed, 0)
+    }
+
+    func testContactThumbnailTaskCancelsWhenModelDeinitializes() async throws {
+        var dependencies = AppDependencies.test()
+        let photoProvider = CancellableContactPhotoProvider()
+        dependencies.contactPhotoProvider = photoProvider
+
+        let contact = try XCTUnwrap(dependencies.seed.contacts.first { !$0.isCurrentUser })
+        var model: AppViewModel? = AppViewModel(dependencies: dependencies)
+        let weakModel = WeakBox(model)
+
+        model?.requestContactThumbnail(for: contact)
+        await photoProvider.waitForStarts(1)
+
+        model = nil
+
+        XCTAssertNil(weakModel.value)
+        await photoProvider.waitForCancellations(1)
+        let counts = await photoProvider.counts()
+        XCTAssertEqual(counts.cancelled, 1)
+        XCTAssertEqual(counts.completed, 0)
+    }
+
+    func testConcurrentLiveTailRefreshesShareRepositoryWork() async throws {
+        var dependencies = AppDependencies.test()
+        let repository = CountingDelayMessageRepository(base: dependencies.messageRepository)
+        dependencies.messageRepository = repository
+        dependencies.isLiveData = true
+
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+        let conversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(conversationID)
+        XCTAssertFalse(model.selectedTranscriptState.usesFixtureData)
+
+        repository.reset()
+        let first = Task { await model.refreshSelectedTranscriptTail() }
+        await repository.waitForMessageCalls(1)
+        let second = Task { await model.refreshSelectedTranscriptTail() }
+
+        await first.value
+        await second.value
+
+        XCTAssertEqual(repository.messageCallCount, 1)
+    }
+
+    func testRestartingIndexRebuildCancelsPreviousRun() async {
+        var dependencies = AppDependencies.test()
+        let indexer = CancellableSearchIndexer()
+        dependencies.searchIndexer = indexer
+
+        let model = AppViewModel(dependencies: dependencies)
+        let first = Task { await model.rebuildIndexes() }
+        await indexer.waitForStarts(1)
+
+        let second = Task { await model.rebuildIndexes() }
+        await indexer.waitForCancellations(1)
+
+        await first.value
+        await second.value
+
+        let counts = await indexer.counts()
+        XCTAssertGreaterThanOrEqual(counts.started, 2)
+        XCTAssertGreaterThanOrEqual(counts.cancelled, 1)
+        XCTAssertGreaterThanOrEqual(counts.completed, 1)
+    }
+
     func testCommandPaletteFiltersAndRunsCommands() async {
         let model = AppViewModel(dependencies: .test())
 
@@ -597,5 +688,205 @@ private final class MutableTailMessageRepository: MessageRepository, @unchecked 
 
     func observeMessages(in conversationID: ConversationID) -> AsyncThrowingStream<[Message], Error> {
         base.observeMessages(in: conversationID)
+    }
+}
+
+private final class CountingDelayMessageRepository: MessageRepository, @unchecked Sendable {
+    private let base: any MessageRepository
+    private let lock = NSLock()
+    private var _messageCallCount = 0
+
+    init(base: any MessageRepository) {
+        self.base = base
+    }
+
+    var messageCallCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _messageCallCount
+    }
+
+    func reset() {
+        lock.lock()
+        _messageCallCount = 0
+        lock.unlock()
+    }
+
+    private func incrementMessageCallCount() {
+        lock.lock()
+        _messageCallCount += 1
+        lock.unlock()
+    }
+
+    func waitForMessageCalls(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if messageCallCount >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func messages(
+        in conversationID: ConversationID,
+        page: PageRequest,
+        around anchor: MessageID?
+    ) async throws -> Page<Message> {
+        incrementMessageCallCount()
+        try await Task.sleep(nanoseconds: 120_000_000)
+        return try await base.messages(in: conversationID, page: page, around: anchor)
+    }
+
+    func message(id: MessageID) async throws -> Message {
+        try await base.message(id: id)
+    }
+
+    func observeMessages(in conversationID: ConversationID) -> AsyncThrowingStream<[Message], Error> {
+        base.observeMessages(in: conversationID)
+    }
+}
+
+private final class WeakBox<Value: AnyObject> {
+    weak var value: Value?
+
+    init(_ value: Value?) {
+        self.value = value
+    }
+}
+
+private actor CancellableImageDescriber: ImageDescribing {
+    private var started = 0
+    private var cancelled = 0
+    private var completed = 0
+
+    func describe(_ attachment: MessageAttachment) async -> String? {
+        started += 1
+        do {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            completed += 1
+            return "late image description"
+        } catch is CancellationError {
+            cancelled += 1
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    func waitForStarts(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if started >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func waitForCancellations(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if cancelled >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func counts() -> (started: Int, cancelled: Int, completed: Int) {
+        (started, cancelled, completed)
+    }
+}
+
+private actor CancellableContactPhotoProvider: ContactPhotoProviding {
+    private var started = 0
+    private var cancelled = 0
+    private var completed = 0
+
+    func thumbnailData(for contactID: ContactID) async throws -> Data? {
+        started += 1
+        do {
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            completed += 1
+            return Data([0x1])
+        } catch is CancellationError {
+            cancelled += 1
+            throw CancellationError()
+        } catch {
+            throw error
+        }
+    }
+
+    func waitForStarts(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if started >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func waitForCancellations(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if cancelled >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func counts() -> (started: Int, cancelled: Int, completed: Int) {
+        (started, cancelled, completed)
+    }
+}
+
+private actor CancellableSearchIndexer: SearchIndexing {
+    private var started = 0
+    private var cancelled = 0
+    private var completed = 0
+
+    func rebuildExactIndex(progress: @Sendable @escaping (Double) -> Void) async throws {
+        try await rebuild(progress: progress)
+    }
+
+    func rebuildSemanticIndex(progress: @Sendable @escaping (Double) -> Void) async throws {
+        try await rebuild(progress: progress)
+    }
+
+    func invalidateIndex(for conversationID: ConversationID?) async throws {}
+
+    private func rebuild(progress: @Sendable @escaping (Double) -> Void) async throws {
+        started += 1
+        progress(0)
+        do {
+            try await Task.sleep(nanoseconds: 220_000_000)
+            progress(1)
+            completed += 1
+        } catch is CancellationError {
+            cancelled += 1
+            throw CancellationError()
+        } catch {
+            throw error
+        }
+    }
+
+    func waitForStarts(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if started >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func waitForCancellations(_ expectedCount: Int) async {
+        for _ in 0..<100 {
+            if cancelled >= expectedCount {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    func counts() -> (started: Int, cancelled: Int, completed: Int) {
+        (started, cancelled, completed)
     }
 }
