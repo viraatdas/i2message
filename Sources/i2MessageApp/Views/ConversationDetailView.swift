@@ -501,12 +501,6 @@ private struct MessageBubble: View {
 
             Divider()
 
-            Button {
-                model.beginReply(to: message)
-            } label: {
-                Label("Reply", systemImage: "arrowshape.turn.up.left")
-            }
-
             if model.isThreadRoot(message) || message.replyToMessageID != nil {
                 Button {
                     model.openThread(for: message)
@@ -801,40 +795,6 @@ private struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let replyTarget = model.currentReplyTarget {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrowshape.turn.up.left.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentColor)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Replying to \(model.senderName(for: replyTarget))")
-                            .font(.caption.weight(.semibold))
-                        Text(replyTarget.body.plainText.isEmpty ? "Attachment" : replyTarget.body.plainText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    Button {
-                        model.cancelReply()
-                    } label: {
-                        Label("Cancel Reply", systemImage: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.secondary)
-                    .help("Cancel reply")
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(I2Palette.selectionFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
             if !model.currentDraftAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

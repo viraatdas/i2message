@@ -96,25 +96,24 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.currentDraftText, "")
         XCTAssertGreaterThan(model.selectedMessages.count, beforeCount)
         XCTAssertEqual(model.selectedMessages.last?.body.plainText, "This is a mock send.")
+        XCTAssertNil(model.selectedMessages.last?.replyToMessageID)
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
-    func testReplyDraftSendsWithReplyContext() async throws {
+    func testMainComposerSendDoesNotCreateReplyAnchor() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
 
-        let target = try XCTUnwrap(model.selectedMessages.first)
-        model.beginReply(to: target)
-        XCTAssertEqual(model.currentReplyTarget?.id, target.id)
-        XCTAssertEqual(model.focusRequest, .composer)
+        let root = try XCTUnwrap(model.selectedMessages.first)
 
-        model.updateDraftText("Replying to the first message.")
+        model.updateDraftText("Normal composer send.")
         await model.sendCurrentDraft()
 
         let sent = try XCTUnwrap(model.selectedMessages.last)
-        XCTAssertEqual(sent.replyToMessageID, target.id)
-        XCTAssertEqual(model.repliedMessage(for: sent)?.id, target.id)
-        XCTAssertNil(model.currentReplyTarget)
+        XCTAssertNil(sent.replyToMessageID)
+        XCTAssertNil(model.repliedMessage(for: sent))
+        XCTAssertTrue(model.visibleTranscriptMessages.contains { $0.id == sent.id })
+        XCTAssertEqual(model.threadReplyCount(for: root), 0)
     }
 
     func testThreadFoldsRepliesAndSurfacesInPanel() async throws {
@@ -122,10 +121,10 @@ final class AppViewModelTests: XCTestCase {
         await model.refreshEverything()
 
         let root = try XCTUnwrap(model.selectedMessages.first)
-        // Send a reply to the first message; it should become a thread.
-        model.beginReply(to: root)
-        model.updateDraftText("first thread reply")
-        await model.sendCurrentDraft()
+        // Thread replies are sent only from the docked panel.
+        model.openThread(rootID: root.id)
+        model.threadDraftText = "first thread reply"
+        await model.sendThreadReply()
 
         XCTAssertTrue(model.isThreadRoot(root))
         XCTAssertEqual(model.threadReplyCount(for: root), 1)
@@ -199,17 +198,6 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedMessages.last?.id, MessageID(rawValue: "live-arrival"))
         XCTAssertTrue(Set(model.selectedMessages.map(\.id)).isSuperset(of: Set(before.map(\.id))))
         XCTAssertEqual(model.selectedMessages.count, before.count + 1)
-    }
-
-    func testCancelReplyClearsTarget() async throws {
-        let model = AppViewModel(dependencies: .test())
-        await model.refreshEverything()
-
-        let target = try XCTUnwrap(model.selectedMessages.first)
-        model.beginReply(to: target)
-        model.cancelReply()
-
-        XCTAssertNil(model.currentReplyTarget)
     }
 
     func testNewMessageStagesPendingConversationForRawHandle() async throws {
