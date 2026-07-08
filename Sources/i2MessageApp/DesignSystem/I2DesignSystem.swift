@@ -4,12 +4,14 @@ import SwiftUI
 enum I2Layout {
     static let minWindowWidth: CGFloat = 920
     static let minWindowHeight: CGFloat = 620
+    static var hairlineWidth: CGFloat { 1 / max(NSScreen.main?.backingScaleFactor ?? 2, 1) }
     static let sidebarMinWidth: CGFloat = 286
     static let sidebarIdealWidth: CGFloat = 328
     static let sidebarMaxWidth: CGFloat = 390
     static let compactSidebarWidth: CGFloat = 64
     static let inspectorWidth: CGFloat = 284
     static let threadPanelWidth: CGFloat = 360
+    static var threadPanelDockWidth: CGFloat { threadPanelWidth + hairlineWidth }
     static let transcriptMaxBubbleWidth: CGFloat = 560
     static let compactTranscriptMaxBubbleWidth: CGFloat = 500
     static let composerMaxWidth: CGFloat = 720
@@ -76,6 +78,17 @@ enum I2Motion {
         reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.88)
     }
 
+    /// Docked thread panel reveal. The panel content stays fixed-width while
+    /// the dock opens; no slide transition competes with transcript layout.
+    static func threadPanel(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.19)
+    }
+
+    /// Quick cleanup when a partial swipe is released or cancelled.
+    static func swipeReset(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .smooth(duration: 0.14)
+    }
+
     /// Insertion/removal transition for floating overlays (Spotlight-style).
     static var overlayTransition: AnyTransition {
         .scale(scale: 0.97, anchor: .center).combined(with: .opacity)
@@ -134,7 +147,7 @@ struct I2Divider: View {
     var body: some View {
         Rectangle()
             .fill(I2Palette.separator)
-            .frame(height: 1 / max(NSScreen.main?.backingScaleFactor ?? 2, 1))
+            .frame(height: I2Layout.hairlineWidth)
     }
 }
 
@@ -142,6 +155,6 @@ struct I2VerticalDivider: View {
     var body: some View {
         Rectangle()
             .fill(I2Palette.separator)
-            .frame(width: 1 / max(NSScreen.main?.backingScaleFactor ?? 2, 1))
+            .frame(width: I2Layout.hairlineWidth)
     }
 }

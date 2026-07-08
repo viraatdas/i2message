@@ -5,6 +5,7 @@ import i2MessageCore
 /// thread's root message followed by every reply, all in one focused column.
 struct ThreadPanelView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isComposerFocused: Bool
 
     var body: some View {
@@ -32,7 +33,11 @@ struct ThreadPanelView: View {
                     .padding(16)
                 }
                 .onChange(of: model.threadPanelMessages.last?.id) { _, last in
-                    if let last { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
+                    if let last {
+                        withAnimation(I2Motion.stateChange(reduceMotion: reduceMotion)) {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
                 }
             }
 
@@ -53,6 +58,16 @@ struct ThreadPanelView: View {
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            EmojiPickerControl(
+                accessibilityLabel: "Insert emoji in thread reply composer",
+                helpText: "Insert emoji in thread reply",
+                popoverTitle: "Thread reply emoji",
+                customPlaceholder: "Paste emoji"
+            ) { emoji in
+                model.insertEmojiInThreadDraft(emoji)
+                isComposerFocused = true
+            }
+
             TextField("Reply in thread…", text: $model.threadDraftText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isComposerFocused)

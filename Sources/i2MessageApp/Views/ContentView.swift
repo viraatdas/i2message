@@ -40,12 +40,7 @@ struct ContentView: View {
 
             DetailRouterView()
 
-            if model.isThreadPanelPresented {
-                I2VerticalDivider()
-                ThreadPanelView()
-                    .frame(width: I2Layout.threadPanelWidth)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
+            ThreadPanelDock()
         }
         .focusable()
         .focusEffectDisabled()
@@ -70,7 +65,6 @@ struct ContentView: View {
             model.dismissTopmostOverlay()
         }
         .animation(I2Motion.sidebar(reduceMotion: reduceMotion), value: model.sidebarMode)
-        .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: model.isThreadPanelPresented)
         .sheet(isPresented: $model.isSettingsPresented) {
             SettingsView()
                 .environmentObject(model)
@@ -126,6 +120,33 @@ struct ContentView: View {
         .background(I2Palette.appBackground)
         .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.selectedConversationID)
         .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarDestination)
+    }
+}
+
+private struct ThreadPanelDock: View {
+    @EnvironmentObject private var model: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if model.isThreadPanelPresented {
+                HStack(spacing: 0) {
+                    I2VerticalDivider()
+
+                    ThreadPanelView()
+                        .frame(width: I2Layout.threadPanelWidth)
+                }
+                .frame(width: I2Layout.threadPanelDockWidth, alignment: .trailing)
+                .transition(.opacity)
+            }
+        }
+        .frame(
+            width: model.isThreadPanelPresented ? I2Layout.threadPanelDockWidth : 0,
+            alignment: .trailing
+        )
+        .frame(maxHeight: .infinity)
+        .clipped()
+        .animation(I2Motion.threadPanel(reduceMotion: reduceMotion), value: model.isThreadPanelPresented)
     }
 }
 

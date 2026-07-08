@@ -168,10 +168,19 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild reports CoreSimulator 1051.54.0 older than build 1051.55.0, though macOS generation, tests, and build still pass.
 - **By:** n9 · 2026-07-08T00:14:54.009Z
 
-## n10: Added native SwiftUI emoji picker controls to main and
-- **Did:** Added native SwiftUI emoji picker controls to main and thread composers with deterministic AppViewModel draft insertion; added fixture-only custom emoji reactions using MessageReactionKind.custom/displayText with live transcript info-banner safety; updated UI docs and tests. Verified ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh passed with the known CoreSimulator warning.
-- **Interfaces:** Sources/i2MessageApp/Views/EmojiPickerControl.swift: EmojiCatalog.normalizedEmoji(from:), EmojiPickerControl, EmojiPickerPopover; AppViewModel insertEmojiInCurrentDraft(_:), insertEmojiInThreadDraft(_:), toggleCustomReaction(_:on:); ConversationDetailView ComposerView/MessageBubble context menu; ThreadPanelView composer; AppViewModelTests coverage; docs/ui.md contract; DECISIONS.md n10 note.
+## n10: Added arbitrary emoji insertion and safe custom reactions
+- **Did:** Added a reusable native SwiftUI emoji popover with common emoji, arbitrary emoji text entry, and macOS Character Viewer handoff; wired explicit emoji insertion into the main composer and thread composer; added fixture-only custom emoji reactions through `MessageReactionKind.custom/displayText`; updated UI-model coverage and docs.
+- **Interfaces:** `EmojiCatalog.normalizedEmoji(from:)`; `EmojiPickerControl`; `EmojiPickerPopover`; `AppViewModel.insertEmojiInCurrentDraft(_:)`; `AppViewModel.insertEmojiInThreadDraft(_:)`; `AppViewModel.toggleCustomReaction(_:on:)`; composer wiring in `ConversationDetailView` and `ThreadPanelView`; tests in `AppViewModelTests`; docs in `docs/ui.md`.
+- **Safety:** Custom reactions mutate only fixture/fixture-backed transcript state. Real live transcripts show an info banner and leave reactions unchanged, preserving the no-direct-Messages-database-write rule.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, and `./scripts/build.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
 - **Follow-ups:**
-  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0, although macOS generation, tests, and build pass.
-- **By:** n10 · 2026-07-08T00:21:25.429Z
+  - Update local CoreSimulator install [out of lane] — The warning is unchanged from n9 and did not block macOS generation, tests, or build.
+- **By:** n10 · 2026-07-08T00:22:00Z
 
+## n11: Stabilized swipe-to-thread and docked thread panel motion
+- **Did:** Replaced ad hoc swipe delta accumulation with `ThreadSwipeGestureState`, which separates horizontal intent from vertical transcript scrolling, passes momentum through, opens at most one thread per gesture, and clears partial state on hover/message/conversation/disappear/end changes. Reworked the thread panel from a trailing move transition to a fixed-width opacity dock, added reduced-motion fallbacks that avoid bubble/panel movement and animated thread auto-scroll, and reset stale thread state when changing conversations or leaving conversation detail.
+- **Interfaces:** `Sources/i2MessageApp/Views/ThreadSwipeGestureState.swift`; `ThreadPanelDock` in `ContentView`; `I2Motion.threadPanel(reduceMotion:)`; `I2Motion.swipeReset(reduceMotion:)`; `I2Layout.hairlineWidth`; `I2Layout.threadPanelDockWidth`; AppViewModel conversation/contact reset behavior; `ThreadSwipeGestureStateTests`; `AppViewModelTests.testChangingConversationClosesThreadPanel`; `docs/ui.md` swipe/panel contract.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, `./scripts/build.sh`, and `./scripts/run-mock-app.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or mock launch.
+- **By:** n11 · 2026-07-07T19:56:00-07:00
