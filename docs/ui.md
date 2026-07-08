@@ -6,8 +6,9 @@ The SwiftUI shell is built around `AppViewModel` in `Sources/i2MessageApp/Featur
 
 - Conversations sidebar with all/unread/pinned/muted filters, unread badges, pinned/muted indicators, attachment hints, stable row sizing, and keyboard next/previous selection.
 - Contacts workspace with handle details, shared thread navigation, contact search, and mock message actions.
-- Transcript detail with lazy `ScrollView`/`LazyVStack` rows, older-page loading, highlighted search result scrolling, emoji tapback badges on bubble corners, a per-bubble context menu (tapbacks, reply, copy), quoted reply context with jump-to-original, edited/failed states, and attachment transfer states.
-- Composer with draft text, attachment/drop intake, auto-growing text field, Return-to-send (Shift-Return inserts a newline, Command-Return also sends), a reply bar with cancel, validation errors, safe Messages.app send/handoff in live mode, and fixture sent-message insertion in tests/previews through `MessageSending`. Live-mode replies hand off to Messages.app because AppleScript cannot anchor inline replies; fixture mode sends them locally.
+- Transcript detail with lazy `ScrollView`/`LazyVStack` rows, older-page loading, highlighted search result scrolling, emoji tapback badges on bubble corners, a per-bubble context menu (standard tapbacks, fixture-only custom emoji reactions, open thread for threaded messages, copy), quoted reply context with jump-to-original, edited/failed states, and attachment transfer states.
+- Composer with draft text, attachment/drop intake, auto-growing text field, an emoji control with common emoji, arbitrary emoji entry, and macOS Character Viewer handoff, Return-to-send (Shift-Return inserts a newline, Command-Return also sends), validation errors, safe Messages.app send/handoff in live mode, and fixture sent-message insertion in tests/previews through `MessageSending`. The main transcript composer always sends normal conversation messages; anchored replies are panel-only.
+- Docked thread panel with root-plus-replies transcript, its own `Reply in thread` composer with the same explicit emoji insertion control, Return-to-send, unread-thread activity state, and focused close behavior.
 - Exact search workspace with scoped conversation search, paged result loading, result previews, attachment/contact/conversation hits, and highlighted snippets.
 - Semantic search workspace with local mock snippets, similarity labels, source message counts, hybrid mode, and transcript jump targets.
 - Settings window/sheet for theme, transcript density, page size, permissions, exact/semantic index toggles, privacy defaults, indexing progress, and diagnostics/offline/error states.
@@ -28,6 +29,8 @@ The UI currently uses:
 - `MessageSending`
 
 `AppDependencies.live()` constructs production read-only data, local search, permission, settings, and safe action implementations. `AppDependencies.fixture(...)` and `.indexedFixture(...)` preserve deterministic preview/test providers. The UI does not mutate Messages storage directly.
+
+Custom emoji reactions use `MessageReactionKind.custom` with `displayText` only for fixture/test transcripts or fixture-backed live seed content. Real live transcripts show an info banner and route users to Messages.app for tapbacks/reactions; i2Message does not write reactions into Messages private storage.
 
 ## Performance Shape
 

@@ -96,25 +96,24 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.currentDraftText, "")
         XCTAssertGreaterThan(model.selectedMessages.count, beforeCount)
         XCTAssertEqual(model.selectedMessages.last?.body.plainText, "This is a mock send.")
+        XCTAssertNil(model.selectedMessages.last?.replyToMessageID)
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
-    func testReplyDraftSendsWithReplyContext() async throws {
+    func testMainComposerSendDoesNotCreateReplyAnchor() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
 
-        let target = try XCTUnwrap(model.selectedMessages.first)
-        model.beginReply(to: target)
-        XCTAssertEqual(model.currentReplyTarget?.id, target.id)
-        XCTAssertEqual(model.focusRequest, .composer)
+        let root = try XCTUnwrap(model.selectedMessages.first)
 
-        model.updateDraftText("Replying to the first message.")
+        model.updateDraftText("Normal composer send.")
         await model.sendCurrentDraft()
 
         let sent = try XCTUnwrap(model.selectedMessages.last)
-        XCTAssertEqual(sent.replyToMessageID, target.id)
-        XCTAssertEqual(model.repliedMessage(for: sent)?.id, target.id)
-        XCTAssertNil(model.currentReplyTarget)
+        XCTAssertNil(sent.replyToMessageID)
+        XCTAssertNil(model.repliedMessage(for: sent))
+        XCTAssertTrue(model.visibleTranscriptMessages.contains { $0.id == sent.id })
+        XCTAssertEqual(model.threadReplyCount(for: root), 0)
     }
 
     func testThreadFoldsRepliesAndSurfacesInPanel() async throws {
@@ -122,10 +121,10 @@ final class AppViewModelTests: XCTestCase {
         await model.refreshEverything()
 
         let root = try XCTUnwrap(model.selectedMessages.first)
-        // Send a reply to the first message; it should become a thread.
-        model.beginReply(to: root)
-        model.updateDraftText("first thread reply")
-        await model.sendCurrentDraft()
+        // Thread replies are sent only from the docked panel.
+        model.openThread(rootID: root.id)
+        model.threadDraftText = "first thread reply"
+        await model.sendThreadReply()
 
         XCTAssertTrue(model.isThreadRoot(root))
         XCTAssertEqual(model.threadReplyCount(for: root), 1)
@@ -157,6 +156,26 @@ final class AppViewModelTests: XCTestCase {
         let sent = try XCTUnwrap(model.selectedMessages.last)
         XCTAssertEqual(sent.replyToMessageID, root.id)
         XCTAssertTrue(model.threadDraftText.isEmpty)
+    }
+
+    func testEmojiInsertionUpdatesMainAndThreadDraftsIndependently() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        model.updateDraftText("Main")
+        model.insertEmojiInCurrentDraft(" 🫡 ")
+        XCTAssertEqual(model.currentDraftText, "Main🫡")
+
+        model.insertEmojiInCurrentDraft("not an emoji")
+        XCTAssertEqual(model.currentDraftText, "Main🫡")
+
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        model.openThread(rootID: root.id)
+        model.threadDraftText = "Thread"
+        model.insertEmojiInThreadDraft("🎯")
+
+        XCTAssertEqual(model.currentDraftText, "Main🫡")
+        XCTAssertEqual(model.threadDraftText, "Thread🎯")
     }
 
     func testLiveTailRefreshMergesNewArrivalsWithoutDroppingHistory() async throws {
@@ -199,17 +218,6 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedMessages.last?.id, MessageID(rawValue: "live-arrival"))
         XCTAssertTrue(Set(model.selectedMessages.map(\.id)).isSuperset(of: Set(before.map(\.id))))
         XCTAssertEqual(model.selectedMessages.count, before.count + 1)
-    }
-
-    func testCancelReplyClearsTarget() async throws {
-        let model = AppViewModel(dependencies: .test())
-        await model.refreshEverything()
-
-        let target = try XCTUnwrap(model.selectedMessages.first)
-        model.beginReply(to: target)
-        model.cancelReply()
-
-        XCTAssertNil(model.currentReplyTarget)
     }
 
     func testNewMessageStagesPendingConversationForRawHandle() async throws {
@@ -354,6 +362,50 @@ final class AppViewModelTests: XCTestCase {
         model.toggleReaction(.laughed, on: updated)
         updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
         XCTAssertEqual(updated.reactions.count, baseline)
+    }
+
+    func testCustomReactionUsesDisplayTextInFixturesOnly() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        let currentUserID = model.dependencies.seed.currentUser.id
+        let baseline = target.reactions.count
+
+        model.toggleCustomReaction(" 🫡 ", on: target)
+        var updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline + 1)
+        XCTAssertTrue(updated.reactions.contains {
+            $0.kind == .custom && $0.displayText == "🫡" && $0.senderID == currentUserID
+        })
+
+        model.toggleCustomReaction("plain text", on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline + 1)
+
+        model.toggleCustomReaction("🫡", on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions.count, baseline)
+    }
+
+    func testCustomReactionDoesNotMutateLiveTranscript() async throws {
+        var dependencies = AppDependencies.test()
+        dependencies.isLiveData = true
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        let conversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(conversationID)
+        XCTAssertFalse(model.selectedTranscriptState.usesFixtureData)
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        let baseline = target.reactions
+
+        model.toggleCustomReaction("🫡", on: target)
+
+        let updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(updated.reactions, baseline)
+        XCTAssertEqual(model.statusBanner?.tone, .info)
     }
 
     func testSearchCommandsScopeCorrectly() async throws {

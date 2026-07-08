@@ -168,3 +168,11 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild reports CoreSimulator 1051.54.0 older than build 1051.55.0, though macOS generation, tests, and build still pass.
 - **By:** n9 · 2026-07-08T00:14:54.009Z
 
+## n10: Added arbitrary emoji insertion and safe custom reactions
+- **Did:** Added a reusable native SwiftUI emoji popover with common emoji, arbitrary emoji text entry, and macOS Character Viewer handoff; wired explicit emoji insertion into the main composer and thread composer; added fixture-only custom emoji reactions through `MessageReactionKind.custom/displayText`; updated UI-model coverage and docs.
+- **Interfaces:** `EmojiCatalog.normalizedEmoji(from:)`; `EmojiPickerControl`; `EmojiPickerPopover`; `AppViewModel.insertEmojiInCurrentDraft(_:)`; `AppViewModel.insertEmojiInThreadDraft(_:)`; `AppViewModel.toggleCustomReaction(_:on:)`; composer wiring in `ConversationDetailView` and `ThreadPanelView`; tests in `AppViewModelTests`; docs in `docs/ui.md`.
+- **Safety:** Custom reactions mutate only fixture/fixture-backed transcript state. Real live transcripts show an info banner and leave reactions unchanged, preserving the no-direct-Messages-database-write rule.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, and `./scripts/build.sh` passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — The warning is unchanged from n9 and did not block macOS generation, tests, or build.
+- **By:** n10 · 2026-07-08T00:22:00Z

@@ -53,6 +53,16 @@ struct ThreadPanelView: View {
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            EmojiPickerControl(
+                accessibilityLabel: "Insert emoji in thread reply composer",
+                helpText: "Insert emoji in thread reply",
+                popoverTitle: "Thread reply emoji",
+                customPlaceholder: "Paste emoji"
+            ) { emoji in
+                model.insertEmojiInThreadDraft(emoji)
+                isComposerFocused = true
+            }
+
             TextField("Reply in thread…", text: $model.threadDraftText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .focused($isComposerFocused)

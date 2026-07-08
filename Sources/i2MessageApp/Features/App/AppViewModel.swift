@@ -70,7 +70,6 @@ final class AppViewModel: ObservableObject {
 
     @Published private var draftTexts: [ConversationID: String] = [:]
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
-    @Published private var replyTargets: [ConversationID: MessageID] = [:]
     @Published private(set) var sendOperation: SendOperation?
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
     private var describingAttachmentIDs: Set<AttachmentID> = []
@@ -201,13 +200,6 @@ final class AppViewModel: ObservableObject {
 
     var canSendCurrentDraft: Bool {
         !currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !currentDraftAttachments.isEmpty
-    }
-
-    var currentReplyTarget: Message? {
-        guard let selectedConversationID, let messageID = replyTargets[selectedConversationID] else {
-            return nil
-        }
-        return message(with: messageID, in: selectedConversationID)
     }
 
     var searchResultCountLabel: String {
@@ -910,6 +902,25 @@ final class AppViewModel: ObservableObject {
         draftTexts[selectedConversationID] = text
     }
 
+    func insertEmojiInCurrentDraft(_ rawEmoji: String) {
+        guard let selectedConversationID,
+              let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji)
+        else {
+            return
+        }
+        draftTexts[selectedConversationID, default: ""].append(emoji)
+        focusRequest = .composer
+    }
+
+    func insertEmojiInThreadDraft(_ rawEmoji: String) {
+        guard threadRootID != nil,
+              let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji)
+        else {
+            return
+        }
+        threadDraftText.append(emoji)
+    }
+
     func addMockAttachment() {
         guard let selectedConversationID else {
             return
@@ -948,18 +959,6 @@ final class AppViewModel: ObservableObject {
             return
         }
         draftAttachments[selectedConversationID, default: []].removeAll { $0.id == attachment.id }
-    }
-
-    func beginReply(to message: Message) {
-        replyTargets[message.conversationID] = message.id
-        focusRequest = .composer
-    }
-
-    func cancelReply() {
-        guard let selectedConversationID else {
-            return
-        }
-        replyTargets[selectedConversationID] = nil
     }
 
     func message(with id: MessageID, in conversationID: ConversationID) -> Message? {
@@ -1032,6 +1031,44 @@ final class AppViewModel: ObservableObject {
         transcriptPages[message.conversationID] = state
     }
 
+    func toggleCustomReaction(_ rawEmoji: String, on message: Message) {
+        guard let emoji = EmojiCatalog.normalizedEmoji(from: rawEmoji) else {
+            return
+        }
+        var state = transcriptPages[message.conversationID] ?? .empty
+        guard let index = state.messages.firstIndex(where: { $0.id == message.id }) else {
+            return
+        }
+        guard !dependencies.isLiveData || state.usesFixtureData else {
+            showBanner(
+                tone: .info,
+                title: "Reactions need Messages.app",
+                message: "macOS does not let other apps send custom emoji reactions. Use Open in Messages to react from Messages.app.",
+                actionTitle: nil
+            )
+            return
+        }
+
+        let currentUserID = dependencies.seed.currentUser.id
+        if let existing = state.messages[index].reactions.firstIndex(where: {
+            $0.senderID == currentUserID && $0.kind == .custom && $0.displayText == emoji
+        }) {
+            state.messages[index].reactions.remove(at: existing)
+        } else {
+            state.messages[index].reactions.removeAll { $0.senderID == currentUserID }
+            state.messages[index].reactions.append(
+                MessageReaction(
+                    id: "local.reaction.\(UUID().uuidString)",
+                    kind: .custom,
+                    senderID: currentUserID,
+                    createdAt: Date(),
+                    displayText: emoji
+                )
+            )
+        }
+        transcriptPages[message.conversationID] = state
+    }
+
     /// Resolves a conversation to a direct Messages Automation target. The
     /// modern Messages `chat` class accepts chat.db GUIDs, so any conversation
     /// with a GUID (1:1 or group) is addressed exactly; conversations without
@@ -1064,11 +1101,10 @@ final class AppViewModel: ObservableObject {
         guard let selectedConversationID else {
             return
         }
-        let replyTargetID = replyTargets[selectedConversationID]
         let isPending = pendingNewConversation?.conversation.id == selectedConversationID
 
-        // Local echo keeps the conversation id + reply anchor so the transcript
-        // threads the message correctly.
+        // Main composer sends are always normal conversation messages. Thread
+        // replies are created only by the docked thread panel.
         let localTarget: SendTarget = isPending
             ? .handles(pendingNewConversation?.handles ?? [])
             : .existingConversation(selectedConversationID)
@@ -1076,13 +1112,12 @@ final class AppViewModel: ObservableObject {
             target: localTarget,
             text: currentDraftText,
             attachments: currentDraftAttachments,
-            replyToMessageID: isPending ? nil : replyTargetID,
+            replyToMessageID: nil,
             requestedService: selectedConversation?.service
         )
 
         // Actual send resolves a real handle for one-to-one chats (so AppleScript
-        // can deliver it) and drops the reply anchor, which Messages Automation
-        // can't attach to a specific bubble.
+        // can deliver it) and still avoids any reply anchor.
         let sendTarget: SendTarget = isPending
             ? localTarget
             : (directAutomationTarget(for: selectedConversationID) ?? localTarget)
@@ -1106,7 +1141,6 @@ final class AppViewModel: ObservableObject {
             }
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
-            replyTargets[selectedConversationID] = nil
             sendOperation = nil
             try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
             if isPending {
