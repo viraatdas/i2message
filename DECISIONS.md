@@ -191,6 +191,7 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Follow-ups:**
   - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or mock launch.
 - **By:** n11 · 2026-07-08T02:57:15.197Z
+
 ## n11: Resolved the DECISIONS.md 3-sided merge conflict by preserving the
 - **Did:** Resolved the DECISIONS.md 3-sided merge conflict by preserving the n10 arbitrary-emoji/custom-reaction decision history and the n11 swipe/thread-panel stabilization decision, while removing jj conflict marker metadata. Verified jj reports no conflicts, ./scripts/generate-xcodeproj.sh passed, ./scripts/test.sh passed, and ./scripts/build.sh passed.
 - **Interfaces:** DECISIONS.md only; preserved documented n10 EmojiPicker/AppViewModel interfaces and n11 ThreadSwipeGestureState/ThreadPanelDock/I2Motion/I2Layout contracts; no source interfaces changed by this conflict resolution.
@@ -198,10 +199,24 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild still warns CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS project generation, tests, and build passed.
 - **By:** n11 · 2026-07-08T03:00:04.879Z
 
-## n12: Replaced main transcript broad data-change scrolling with explicit AppViewModel
-- **Did:** Replaced main transcript broad data-change scrolling with explicit AppViewModel scroll intents. Initial/reset loads, search anchors, older-page prepends, and visible local sends now route predictably; live tail refreshes preserve readers; highlighted thread replies remain visible for search while normal thread replies stay folded. Added regression coverage and refreshed UI/performance docs. Verified generate-xcodeproj, full tests, build, and isolated synthetic performance pass.
-- **Interfaces:** TranscriptScrollIntent/TranscriptScrollAnchor/TranscriptScrollReason in AppViewState; AppViewModel.transcriptScrollIntent and visibleTranscriptMessages highlight exception; ConversationDetailView intent-driven ScrollViewReader handling; AppViewModelTests scroll intent regressions; docs/ui.md and docs/performance.md contracts
+## n12: Replaced broad transcript auto-scroll with explicit scroll intents
+- **Did:** Added `TranscriptScrollIntent` state so the main transcript scrolls only for initial/reset loads, explicit search anchors, older-page preservation, and visible local sends. Older-page prepends now keep the previous top visible message anchored; passive live tail refreshes merge without bottom snapping; highlighted thread replies stay visible for search routing while normal thread replies remain folded out of the main transcript. Resolved the inherited `DECISIONS.md` conflict by preserving n10/n11 entries.
+- **Interfaces:** `TranscriptScrollIntent`, `TranscriptScrollAnchor`, and `TranscriptScrollReason` in `AppViewState`; `AppViewModel.transcriptScrollIntent`; `visibleTranscriptMessages` highlight exception; `ConversationDetailView` scroll-intent handling; UI-model regression coverage in `AppViewModelTests`; updated `docs/ui.md` and `docs/performance.md` scroll contracts.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, `./scripts/build.sh`, and the isolated synthetic performance test passed. Latest synthetic report: launch 0.316s, older-page load 0.0018s, exact search 0.0029s, semantic search 0.356s, transcript route 0.0006s on the 120-conversation/12,000-message fixture. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
 - **Follow-ups:**
-  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during macOS build/test, though all required verification passed.
-- **By:** n12 · 2026-07-08T03:56:12.499Z
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or synthetic performance verification.
+- **By:** n12 · 2026-07-08T03:56:00Z
+## n12: Resolved the n12 jj merge conflict in DECISIONS.md by
+- **Did:** Resolved the n12 jj merge conflict in DECISIONS.md by preserving the finalized n10 emoji picker/custom reaction decision, n11 swipe/thread-panel stabilization decision, and n12 explicit transcript scroll-intent decision. Confirmed jj reports no unresolved conflicts and verified with ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh.
+- **Interfaces:** DECISIONS.md only; preserved documented TranscriptScrollIntent/TranscriptScrollAnchor/TranscriptScrollReason, AppViewModel.transcriptScrollIntent, visibleTranscriptMessages highlight exception, ConversationDetailView scroll-intent handling, n10 EmojiPicker/AppViewModel emoji interfaces, and n11 ThreadSwipeGestureState/ThreadPanelDock/I2Motion/I2Layout contracts.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode continues to warn that CoreSimulator 1051.54.0 is older than build 1051.55.0, though generation, tests, and build passed.
+- **By:** n12 · 2026-07-08T03:59:14.064Z
+
+## n13: Audited async/UI lifecycle paths, resolved inherited DECISIONS conflict, added
+- **Did:** Audited async/UI lifecycle paths, resolved inherited DECISIONS conflict, added explicit cancellation for AppViewModel observation/indexing/delayed reload/banner/attachment/contact tasks, coalesced transcript tail refresh work, bounded transient caches, tightened SwiftUI thumbnail and overlay debounce cancellation, added lifecycle regression tests and docs note, and verified generate-xcodeproj/test/build pass with only the known CoreSimulator warning.
+- **Interfaces:** AppViewModel task ownership: attachmentDescriptionTasks, contactThumbnailTasks, transcriptReloadTask, indexingTaskGeneration, refreshingTranscriptTailConversationIDs; MediaThumbnail.load cancellation behavior; SearchOverlayView/NewMessageOverlayView onDisappear debounce cancellation; AppViewModelTests lifecycle mocks and regressions; docs/performance.md Lifecycle Audit; DECISIONS.md n13 record.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during generation/test/build, though all required commands passed.
+- **By:** n13 · 2026-07-08T04:10:25.034Z
 

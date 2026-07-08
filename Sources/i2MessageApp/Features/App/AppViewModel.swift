@@ -13,6 +13,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedConversationID: ConversationID?
     @Published var selectedContactID: ContactID?
     @Published var highlightedMessageID: MessageID?
+    @Published private(set) var transcriptScrollIntent: TranscriptScrollIntent?
 
     @Published private(set) var conversations: [Conversation]
     @Published private(set) var contacts: [Contact]
@@ -80,6 +81,7 @@ final class AppViewModel: ObservableObject {
     private var searchPageCursor: PageCursor?
     private var observationTask: Task<Void, Never>?
     private var indexingTask: Task<Void, Never>?
+    private var transcriptScrollSequence = 0
     private var hasLoaded = false
 
     init(dependencies: AppDependencies = .mock()) {
@@ -314,7 +316,8 @@ final class AppViewModel: ObservableObject {
         if let pending = pendingNewConversation, pending.conversation.id != id {
             pendingNewConversation = nil
         }
-        if selectedConversationID != id {
+        let isChangingConversation = selectedConversationID != id
+        if isChangingConversation {
             closeThread()
         }
         selectedConversationID = id
@@ -324,6 +327,8 @@ final class AppViewModel: ObservableObject {
             await loadMessages(in: id, reset: true, around: highlightedMessageID)
         } else if transcriptPages[id]?.messages.isEmpty ?? true {
             await loadSelectedConversation(reset: true)
+        } else if isChangingConversation, let messages = transcriptPages[id]?.messages {
+            requestTranscriptTailScroll(conversationID: id, reason: .initialLoad, messages: messages)
         }
     }
 
@@ -811,11 +816,14 @@ final class AppViewModel: ObservableObject {
         guard reset || (state.hasMoreOlder && !state.isLoadingOlder) else {
             return
         }
+        let preserveTopMessageID = !reset && conversationID == selectedConversationID
+            ? visibleTranscriptMessages(from: state.messages, highlightedMessageID: highlightedMessageID).first?.id
+            : nil
 
         // A conversation already served from fixtures pages locally; the live
         // repository does not know fixture conversation IDs.
         if dependencies.isLiveData, state.usesFixtureData {
-            loadFixtureTranscriptPage(for: conversationID, reset: reset)
+            loadFixtureTranscriptPage(for: conversationID, reset: reset, preserving: preserveTopMessageID)
             return
         }
 
@@ -853,6 +861,17 @@ final class AppViewModel: ObservableObject {
             transcriptPages[conversationID] = nextState
             if conversationID == selectedConversationID {
                 reconcileThreadBaselines()
+                if let anchor {
+                    requestTranscriptScrollToMessage(anchor, conversationID: conversationID, anchor: .center, reason: .searchResult)
+                } else if reset {
+                    requestTranscriptTailScroll(conversationID: conversationID, reason: .initialLoad, messages: nextState.messages)
+                } else {
+                    requestTranscriptPreserveScroll(
+                        previousTopMessageID: preserveTopMessageID,
+                        conversationID: conversationID,
+                        messages: nextState.messages
+                    )
+                }
             }
         } catch {
             AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
@@ -872,7 +891,11 @@ final class AppViewModel: ObservableObject {
     /// Serves a transcript page for a fixture conversation directly from the
     /// seed dataset so fixture threads stay browsable when the live Messages
     /// store is unreadable.
-    private func loadFixtureTranscriptPage(for conversationID: ConversationID, reset: Bool) {
+    private func loadFixtureTranscriptPage(
+        for conversationID: ConversationID,
+        reset: Bool,
+        preserving previousTopMessageID: MessageID? = nil
+    ) {
         let allMessages = dependencies.seed.messagesByConversation[conversationID, default: []]
         let limit = max(settings.pageSize, 20)
         var state = transcriptPages[conversationID] ?? .empty
@@ -900,6 +923,18 @@ final class AppViewModel: ObservableObject {
         state.errorMessage = nil
         state.usesFixtureData = true
         transcriptPages[conversationID] = state
+        if conversationID == selectedConversationID {
+            reconcileThreadBaselines()
+            if reset {
+                requestTranscriptTailScroll(conversationID: conversationID, reason: .initialLoad, messages: state.messages)
+            } else {
+                requestTranscriptPreserveScroll(
+                    previousTopMessageID: previousTopMessageID,
+                    conversationID: conversationID,
+                    messages: state.messages
+                )
+            }
+        }
     }
 
     func updateDraftText(_ text: String) {
@@ -1552,11 +1587,104 @@ final class AppViewModel: ObservableObject {
     /// hidden when its root is also loaded, so new thread activity shows up as a
     /// quiet indicator on the root instead of a fresh bubble in the channel.
     var visibleTranscriptMessages: [Message] {
-        let loadedIDs = Set(selectedMessages.map(\.id))
-        return selectedMessages.filter { message in
+        visibleTranscriptMessages(from: selectedMessages, highlightedMessageID: highlightedMessageID)
+    }
+
+    private func visibleTranscriptMessages(from messages: [Message], highlightedMessageID: MessageID?) -> [Message] {
+        let loadedIDs = Set(messages.map(\.id))
+        return messages.filter { message in
+            if message.id == highlightedMessageID {
+                return true
+            }
             guard let parent = message.replyToMessageID else { return true }
             return !loadedIDs.contains(parent)
         }
+    }
+
+    private func transcriptScrollTarget(
+        for messageID: MessageID,
+        in messages: [Message],
+        highlightedMessageID: MessageID?
+    ) -> MessageID? {
+        let visibleMessages = visibleTranscriptMessages(from: messages, highlightedMessageID: highlightedMessageID)
+        let visibleIDs = Set(visibleMessages.map(\.id))
+        if visibleIDs.contains(messageID) {
+            return messageID
+        }
+        if let message = messages.first(where: { $0.id == messageID }),
+           let parent = message.replyToMessageID,
+           visibleIDs.contains(parent) {
+            return parent
+        }
+        return nil
+    }
+
+    private func requestTranscriptScrollToMessage(
+        _ messageID: MessageID,
+        conversationID: ConversationID,
+        anchor: TranscriptScrollAnchor,
+        reason: TranscriptScrollReason
+    ) {
+        guard let messages = transcriptPages[conversationID]?.messages,
+              let target = transcriptScrollTarget(
+                for: messageID,
+                in: messages,
+                highlightedMessageID: highlightedMessageID
+              ) else {
+            return
+        }
+        transcriptScrollSequence += 1
+        transcriptScrollIntent = TranscriptScrollIntent(
+            sequence: transcriptScrollSequence,
+            conversationID: conversationID,
+            messageID: target,
+            anchor: anchor,
+            reason: reason
+        )
+    }
+
+    private func requestTranscriptTailScroll(
+        conversationID: ConversationID,
+        reason: TranscriptScrollReason,
+        messages: [Message]
+    ) {
+        guard let lastVisibleID = visibleTranscriptMessages(
+            from: messages,
+            highlightedMessageID: highlightedMessageID
+        ).last?.id else {
+            return
+        }
+        transcriptScrollSequence += 1
+        transcriptScrollIntent = TranscriptScrollIntent(
+            sequence: transcriptScrollSequence,
+            conversationID: conversationID,
+            messageID: lastVisibleID,
+            anchor: .bottom,
+            reason: reason
+        )
+    }
+
+    private func requestTranscriptPreserveScroll(
+        previousTopMessageID: MessageID?,
+        conversationID: ConversationID,
+        messages: [Message]
+    ) {
+        guard let previousTopMessageID,
+              let target = transcriptScrollTarget(
+                for: previousTopMessageID,
+                in: messages,
+                highlightedMessageID: highlightedMessageID
+              ) else {
+            return
+        }
+        transcriptScrollSequence += 1
+        transcriptScrollIntent = TranscriptScrollIntent(
+            sequence: transcriptScrollSequence,
+            conversationID: conversationID,
+            messageID: target,
+            anchor: .top,
+            reason: .olderPage
+        )
     }
 
     /// True when a thread has picked up replies since the user last opened it.
@@ -1716,8 +1844,9 @@ final class AppViewModel: ObservableObject {
         let messages = dependencies.seed.messagesByConversation[first, default: []]
         let limit = max(settings.pageSize, 20)
         let start = max(0, messages.count - limit)
+        let pageMessages = Array(messages[start..<messages.count])
         transcriptPages[first] = TranscriptPageState(
-            messages: Array(messages[start..<messages.count]),
+            messages: pageMessages,
             olderCursor: start > 0 ? PageCursor(rawValue: "older:\(start)") : nil,
             hasMoreOlder: start > 0,
             isLoadingOlder: false,
@@ -1726,6 +1855,7 @@ final class AppViewModel: ObservableObject {
             errorMessage: nil,
             usesFixtureData: true
         )
+        requestTranscriptTailScroll(conversationID: first, reason: .initialLoad, messages: pageMessages)
     }
 
     private func startObservingDataChanges() {
@@ -1999,7 +2129,15 @@ final class AppViewModel: ObservableObject {
             conversations[index].updatedAt = message.sentAt
             conversations.sort(by: MockAppDataset.conversationSort)
         }
-        highlightedMessageID = message.id
+        highlightedMessageID = nil
+        if draft.replyToMessageID == nil {
+            requestTranscriptScrollToMessage(
+                message.id,
+                conversationID: conversationID,
+                anchor: .bottom,
+                reason: .localSend
+            )
+        }
     }
 
     private func showBanner(

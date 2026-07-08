@@ -142,6 +142,27 @@ struct TranscriptPageState: Equatable {
     )
 }
 
+enum TranscriptScrollAnchor: String, Equatable {
+    case top
+    case center
+    case bottom
+}
+
+enum TranscriptScrollReason: String, Equatable {
+    case initialLoad
+    case olderPage
+    case searchResult
+    case localSend
+}
+
+struct TranscriptScrollIntent: Equatable {
+    var sequence: Int
+    var conversationID: ConversationID
+    var messageID: MessageID
+    var anchor: TranscriptScrollAnchor
+    var reason: TranscriptScrollReason
+}
+
 struct IndexingProgress: Equatable {
     var isIndexing: Bool
     var exactProgress: Double

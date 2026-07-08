@@ -77,6 +77,7 @@ private struct TranscriptView: View {
     // tracks horizontal intent over the hovered message.
     @State private var swipeState = ThreadSwipeGestureState()
     @State private var swipeMonitor: Any?
+    @State private var handledScrollIntentSequence = 0
 
     var body: some View {
         let state = model.selectedTranscriptState
@@ -163,7 +164,7 @@ private struct TranscriptView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onAppear {
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
                 installSwipeMonitor()
             }
             .onDisappear {
@@ -178,12 +179,10 @@ private struct TranscriptView: View {
                    !ids.contains(hoveredMessageID) {
                     resetSwipeState(animated: false)
                 }
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
             }
-            .onChange(of: model.highlightedMessageID) { _, _ in
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
-            }
-            .onChange(of: messages.last?.id) { _, _ in
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            .onChange(of: model.transcriptScrollIntent) { _, _ in
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
             }
         }
     }
@@ -281,11 +280,35 @@ private struct TranscriptView: View {
         }
     }
 
-    private func scrollToRelevantMessage(proxy: ScrollViewProxy, messages: [Message]) {
-        if let highlighted = model.highlightedMessageID {
-            proxy.scrollTo(highlighted, anchor: .center)
-        } else if let last = messages.last?.id {
-            proxy.scrollTo(last, anchor: .bottom)
+    private func applyTranscriptScrollIntent(proxy: ScrollViewProxy, messages: [Message]) {
+        guard let intent = model.transcriptScrollIntent,
+              intent.conversationID == conversation.id,
+              intent.sequence != handledScrollIntentSequence,
+              messages.contains(where: { $0.id == intent.messageID }) else {
+            return
+        }
+
+        let scroll = {
+            proxy.scrollTo(intent.messageID, anchor: unitPoint(for: intent.anchor))
+        }
+        if let animation = I2Motion.stateChange(reduceMotion: reduceMotion) {
+            withAnimation(animation) {
+                scroll()
+            }
+        } else {
+            scroll()
+        }
+        handledScrollIntentSequence = intent.sequence
+    }
+
+    private func unitPoint(for anchor: TranscriptScrollAnchor) -> UnitPoint {
+        switch anchor {
+        case .top:
+            return .top
+        case .center:
+            return .center
+        case .bottom:
+            return .bottom
         }
     }
 
