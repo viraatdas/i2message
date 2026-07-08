@@ -3,6 +3,27 @@ import AVFoundation
 import SwiftUI
 import i2MessageCore
 
+extension String {
+    private static let linkDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.link.rawValue
+    )
+
+    /// The string with detected URLs marked as tappable links. SwiftUI `Text`
+    /// opens them through the environment's `openURL` (default browser).
+    var linkifiedAttributedString: AttributedString {
+        var attributed = AttributedString(self)
+        guard let detector = String.linkDetector else { return attributed }
+        let fullRange = NSRange(startIndex..., in: self)
+        for match in detector.matches(in: self, options: [], range: fullRange) {
+            guard let url = match.url,
+                  let range = Range(match.range, in: attributed) else { continue }
+            attributed[range].link = url
+            attributed[range].underlineStyle = .single
+        }
+        return attributed
+    }
+}
+
 /// Loads a downsized bitmap for an image or video attachment off the main
 /// thread. Returns nil for non-media or unreadable files.
 enum MediaThumbnail {

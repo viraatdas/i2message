@@ -61,6 +61,15 @@ public actor SQLiteAttachmentRepository: AttachmentRepository {
                     continue
                 }
 
+                if MessagesMapping.isPluginPayload(
+                    filename: row["filename"].string,
+                    transferName: row["transfer_name"].string,
+                    uti: row["uti"].string,
+                    mimeType: row["mime_type"].string
+                ) {
+                    continue
+                }
+
                 grouped[messageRowID, default: []].append(
                     Self.mapAttachment(row, attachmentsDirectoryURL: attachmentsDirectoryURL)
                 )

@@ -97,6 +97,19 @@ enum MessagesMapping {
         }
     }
 
+    /// Balloon-plugin payloads (link previews and other app-message blobs)
+    /// are bookkeeping data, not user files — they should not surface as
+    /// attachments in transcripts.
+    static func isPluginPayload(filename: String?, transferName: String?, uti: String?, mimeType: String?) -> Bool {
+        [filename, transferName, uti, mimeType]
+            .compactMap { $0?.lowercased() }
+            .contains { value in
+                value.hasSuffix(".pluginpayloadattachment")
+                    || value.contains("pluginpayload")
+                    || value.contains("messages.url.balloon")
+            }
+    }
+
     static func attachmentKind(filename: String, uti: String?, mimeType: String?, transferName: String?) -> AttachmentKind {
         let searchSpace = [uti, mimeType, transferName, filename]
             .compactMap { $0?.lowercased() }

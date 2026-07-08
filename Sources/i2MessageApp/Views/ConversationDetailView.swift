@@ -273,10 +273,10 @@ private struct TranscriptView: View {
 
         if animated {
             withAnimation(I2Motion.swipeReset(reduceMotion: reduceMotion)) {
-                swipeState.resetGesture()
+                _ = swipeState.resetGesture()
             }
         } else {
-            swipeState.resetGesture()
+            _ = swipeState.resetGesture()
         }
     }
 
@@ -507,7 +507,7 @@ private struct MessageBubble: View {
     private var bubbleContent: some View {
         VStack(alignment: .leading, spacing: bubbleSpacing) {
             if !message.body.plainText.isEmpty {
-                Text(message.body.plainText)
+                Text(message.body.plainText.linkifiedAttributedString)
                     .font(.body)
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)

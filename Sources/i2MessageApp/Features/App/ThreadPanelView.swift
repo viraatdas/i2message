@@ -84,6 +84,8 @@ struct ThreadPanelView: View {
                         Task { await model.sendThreadReply() }
                     }
                 }
+                .accessibilityLabel("Thread reply composer")
+                .accessibilityHint("Type a reply for the open thread")
 
             Button {
                 Task { await model.sendThreadReply() }
@@ -94,6 +96,8 @@ struct ThreadPanelView: View {
             .labelStyle(.iconOnly)
             .disabled(!model.canSendThreadReply)
             .help("Send reply in thread (Return)")
+            .accessibilityLabel("Send thread reply")
+            .accessibilityHint("Sends the draft in the thread panel")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -127,6 +131,8 @@ struct ThreadPanelView: View {
             }
             .buttonStyle(.plain)
             .help("Close thread (Esc)")
+            .accessibilityLabel("Close thread")
+            .accessibilityHint("Closes the thread panel")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -177,7 +183,7 @@ private struct ThreadMessageRow: View {
                 }
 
                 if !message.body.plainText.isEmpty {
-                    Text(message.body.plainText)
+                    Text(message.body.plainText.linkifiedAttributedString)
                         .font(.body)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
