@@ -147,3 +147,24 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Configure Apple Developer and notarization secrets [out of lane] — Production signed/notarized release remains blocked by missing APPLE_TEAM_ID, Developer ID certificate/password/keychain password, and App Store Connect or Apple ID notarization credentials.
 - **By:** worker · 2026-07-06T02:39:13.451Z
 
+## Plan approved
+- **What:** Approved a 6-task plan for: - there should be no reply in the thing - have a way to put any emoji or like emoji picker - improve the the swipe into the thread panel animation it's buggy - scorlling down and whanto tther eis a lot of bugs - check for memory leaks make sure it's not getting fucked up. Tasks: Remove inline reply affordance; Add arbitrary emoji picker; Stabilize swipe and thread animation; Fix long transcript scrolling; Audit lifecycle and memory leaks; Final integration QA.
+- **Why:** user-approved plan; workers implement these nodes in isolated workspaces, honoring the dependency edges
+- **By:** conductor · 1783469440645
+
+## worker: Verified main checkout after prior repair: origin/main is 63e09ac967cde896bf009…
+- **Did:** Verified main checkout after prior repair: origin/main is 63e09ac967cde896bf00932ce365c7e7d4331b09, v0.1.0 exists remotely at 43c330ed741d2d606935af13722ef3833ddbde6c, ./scripts/verify.sh passed, ./scripts/release/local-dry-run.sh passed with unsigned DMG SHA-256 f326752c762a7e2a94eda4c9d28e48b6dec1e24c716457d46cdc72987ff235b9, release env validation is blocked only by missing Apple signing/notarization variables, tracked/tag/diff/artifact privacy audits passed, and idempotent pushes for origin main and refs/tags/v0.1.0 returned Everything up-to-date. GitHub Release workflow run 28764151051 for v0.1.0 is completed failure in the Test step; no GitHub Release exists.
+- **Interfaces:** origin https://github.com/viraatdas/i2message.git; branch main -> 63e09ac967cde896bf00932ce365c7e7d4331b09; tag v0.1.0 -> 43c330ed741d2d606935af13722ef3833ddbde6c; workflow .github/workflows/release.yml; artifact build/Release/i2Message-0.1.0-unsigned.dmg; checksum build/Release/SHA256SUMS.txt
+- **Follow-ups:**
+  - Decide how to release current main after v0.1.0 [out of lane] — The remote v0.1.0 tag already exists on 43c330ed while origin/main has advanced to 63e09ac, so I did not move the published tag without explicit instruction.
+  - Fix or rerun tag Release workflow [out of lane] — GitHub Actions run 28764151051 for v0.1.0 failed in the Test step before artifact build/upload/release creation.
+  - Configure Apple release secrets [out of lane] — Signed Developer ID archive, notarization, stapling, Gatekeeper assessment, and signed GitHub Release publication require the missing Apple Developer/notarization secrets.
+- **By:** worker · 2026-07-08T00:12:36.830Z
+
+## n9: Removed the main transcript inline reply flow: no Reply
+- **Did:** Removed the main transcript inline reply flow: no Reply context-menu command, no composer reply banner, and normal composer sends always carry nil replyToMessageID. Preserved thread-panel replies through sendThreadReply/openThread, updated AppViewModel tests for normal send vs panel reply, updated docs/ui.md, and verified generate-xcodeproj, test, and build all pass. xcodebuild still reports the existing non-blocking CoreSimulator version warning.
+- **Interfaces:** Sources/i2MessageApp/Views/ConversationDetailView.swift ComposerView/MessageBubble context menu; Sources/i2MessageApp/Features/App/AppViewModel.swift sendCurrentDraft/sendThreadReply/openThread; Tests/i2MessageAppTests/UIModel/AppViewModelTests.swift; docs/ui.md
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — xcodebuild reports CoreSimulator 1051.54.0 older than build 1051.55.0, though macOS generation, tests, and build still pass.
+- **By:** n9 · 2026-07-08T00:14:54.009Z
+
