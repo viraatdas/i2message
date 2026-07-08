@@ -70,7 +70,6 @@ final class AppViewModel: ObservableObject {
 
     @Published private var draftTexts: [ConversationID: String] = [:]
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
-    @Published private var replyTargets: [ConversationID: MessageID] = [:]
     @Published private(set) var sendOperation: SendOperation?
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
     private var describingAttachmentIDs: Set<AttachmentID> = []
@@ -201,13 +200,6 @@ final class AppViewModel: ObservableObject {
 
     var canSendCurrentDraft: Bool {
         !currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !currentDraftAttachments.isEmpty
-    }
-
-    var currentReplyTarget: Message? {
-        guard let selectedConversationID, let messageID = replyTargets[selectedConversationID] else {
-            return nil
-        }
-        return message(with: messageID, in: selectedConversationID)
     }
 
     var searchResultCountLabel: String {
@@ -950,18 +942,6 @@ final class AppViewModel: ObservableObject {
         draftAttachments[selectedConversationID, default: []].removeAll { $0.id == attachment.id }
     }
 
-    func beginReply(to message: Message) {
-        replyTargets[message.conversationID] = message.id
-        focusRequest = .composer
-    }
-
-    func cancelReply() {
-        guard let selectedConversationID else {
-            return
-        }
-        replyTargets[selectedConversationID] = nil
-    }
-
     func message(with id: MessageID, in conversationID: ConversationID) -> Message? {
         transcriptPages[conversationID]?.messages.first { $0.id == id }
             ?? dependencies.seed.messagesByConversation[conversationID]?.first { $0.id == id }
@@ -1064,11 +1044,10 @@ final class AppViewModel: ObservableObject {
         guard let selectedConversationID else {
             return
         }
-        let replyTargetID = replyTargets[selectedConversationID]
         let isPending = pendingNewConversation?.conversation.id == selectedConversationID
 
-        // Local echo keeps the conversation id + reply anchor so the transcript
-        // threads the message correctly.
+        // Main composer sends are always normal conversation messages. Thread
+        // replies are created only by the docked thread panel.
         let localTarget: SendTarget = isPending
             ? .handles(pendingNewConversation?.handles ?? [])
             : .existingConversation(selectedConversationID)
@@ -1076,13 +1055,12 @@ final class AppViewModel: ObservableObject {
             target: localTarget,
             text: currentDraftText,
             attachments: currentDraftAttachments,
-            replyToMessageID: isPending ? nil : replyTargetID,
+            replyToMessageID: nil,
             requestedService: selectedConversation?.service
         )
 
         // Actual send resolves a real handle for one-to-one chats (so AppleScript
-        // can deliver it) and drops the reply anchor, which Messages Automation
-        // can't attach to a specific bubble.
+        // can deliver it) and still avoids any reply anchor.
         let sendTarget: SendTarget = isPending
             ? localTarget
             : (directAutomationTarget(for: selectedConversationID) ?? localTarget)
@@ -1106,7 +1084,6 @@ final class AppViewModel: ObservableObject {
             }
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
-            replyTargets[selectedConversationID] = nil
             sendOperation = nil
             try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
             if isPending {

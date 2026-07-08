@@ -168,3 +168,10 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — xcodebuild reports CoreSimulator 1051.54.0 older than build 1051.55.0, though macOS generation, tests, and build still pass.
 - **By:** n9 · 2026-07-08T00:14:54.009Z
 
+## n10: Added native SwiftUI emoji picker controls to main and
+- **Did:** Added native SwiftUI emoji picker controls to main and thread composers with deterministic AppViewModel draft insertion; added fixture-only custom emoji reactions using MessageReactionKind.custom/displayText with live transcript info-banner safety; updated UI docs and tests. Verified ./scripts/generate-xcodeproj.sh, ./scripts/test.sh, and ./scripts/build.sh passed with the known CoreSimulator warning.
+- **Interfaces:** Sources/i2MessageApp/Views/EmojiPickerControl.swift: EmojiCatalog.normalizedEmoji(from:), EmojiPickerControl, EmojiPickerPopover; AppViewModel insertEmojiInCurrentDraft(_:), insertEmojiInThreadDraft(_:), toggleCustomReaction(_:on:); ConversationDetailView ComposerView/MessageBubble context menu; ThreadPanelView composer; AppViewModelTests coverage; docs/ui.md contract; DECISIONS.md n10 note.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0, although macOS generation, tests, and build pass.
+- **By:** n10 · 2026-07-08T00:21:25.429Z
+
