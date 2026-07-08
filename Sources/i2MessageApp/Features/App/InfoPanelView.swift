@@ -165,6 +165,7 @@ private struct SharedMediaThumbnail: View {
 
     private func loadThumbnail() async {
         if let loaded = await MediaThumbnail.load(attachment, maxDimension: 180) {
+            guard !Task.isCancelled else { return }
             image = loaded
         }
     }

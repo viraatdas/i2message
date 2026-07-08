@@ -31,6 +31,10 @@ struct NewMessageOverlayView: View {
             .offset(y: -40)
         }
         .onAppear { recipientFocused = true }
+        .onDisappear {
+            debounceTask?.cancel()
+            debounceTask = nil
+        }
         .onExitCommand { model.closeNewMessage() }
         .onChange(of: model.focusRequest) { _, request in
             guard request == .newMessageRecipient else { return }

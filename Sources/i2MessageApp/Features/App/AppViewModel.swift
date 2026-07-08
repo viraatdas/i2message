@@ -73,16 +73,27 @@ final class AppViewModel: ObservableObject {
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
     @Published private(set) var sendOperation: SendOperation?
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
-    private var describingAttachmentIDs: Set<AttachmentID> = []
+    private var attachmentDescriptionTasks: [AttachmentID: Task<Void, Never>] = [:]
+    private var attachmentDescriptionAccessOrder: [AttachmentID] = []
     @Published private(set) var contactThumbnails: [ContactID: Data] = [:]
-    private var loadingThumbnailIDs: Set<ContactID> = []
+    private var contactThumbnailTasks: [ContactID: Task<Void, Never>] = [:]
+    private var contactThumbnailMisses: Set<ContactID> = []
+    private var contactThumbnailAccessOrder: [ContactID] = []
 
     let dependencies: AppDependencies
     private var searchPageCursor: PageCursor?
     private var observationTask: Task<Void, Never>?
     private var indexingTask: Task<Void, Never>?
+    private var indexingTaskGeneration = 0
+    private var transcriptReloadTask: Task<Void, Never>?
+    private var transcriptReloadSequence = 0
+    private var refreshingTranscriptTailConversationIDs: Set<ConversationID> = []
     private var transcriptScrollSequence = 0
     private var hasLoaded = false
+
+    private static let maxAttachmentDescriptionCacheSize = 160
+    private static let maxContactThumbnailCacheSize = 200
+    private static let maxDateMentionCacheSize = 500
 
     init(dependencies: AppDependencies = .mock()) {
         self.dependencies = dependencies
@@ -99,6 +110,10 @@ final class AppViewModel: ObservableObject {
     deinit {
         observationTask?.cancel()
         indexingTask?.cancel()
+        transcriptReloadTask?.cancel()
+        bannerDismissTask?.cancel()
+        attachmentDescriptionTasks.values.forEach { $0.cancel() }
+        contactThumbnailTasks.values.forEach { $0.cancel() }
     }
 
     var isUsingLiveData: Bool {
@@ -234,6 +249,9 @@ final class AppViewModel: ObservableObject {
         let start = clock.now
         AppDiagnostics.lifecycle("load_started")
         await refreshEverything()
+        guard !Task.isCancelled else {
+            return
+        }
         AppDiagnostics.loadCompleted(
             duration: start.duration(to: clock.now),
             conversations: conversations.count,
@@ -654,15 +672,19 @@ final class AppViewModel: ObservableObject {
     // MARK: - Calendar suggestions
 
     private var dateMentionCache: [MessageID: DetectedDateMention?] = [:]
+    private var dateMentionAccessOrder: [MessageID] = []
 
     /// Returns a calendar-worthy date/time detected in the message, if any.
     /// Cached so repeated bubble renders don't re-run the detector.
     func dateMention(in message: Message) -> DetectedDateMention? {
         if let cached = dateMentionCache[message.id] {
+            touchDateMentionCacheEntry(message.id)
             return cached
         }
         let mention = DateMentionDetector.firstMention(in: message.body.plainText)
         dateMentionCache[message.id] = mention
+        touchDateMentionCacheEntry(message.id)
+        trimDateMentionCacheIfNeeded()
         return mention
     }
 
@@ -1018,15 +1040,14 @@ final class AppViewModel: ObservableObject {
     func requestAttachmentDescription(for attachment: MessageAttachment, in message: Message) {
         guard attachment.kind == .image,
               attachmentDescriptions[attachment.id] == nil,
-              !describingAttachmentIDs.contains(attachment.id),
+              attachmentDescriptionTasks[attachment.id] == nil,
               let describer = dependencies.imageDescriber
         else {
             return
         }
         let isFixtureContent = !dependencies.isLiveData
             || (transcriptPages[message.conversationID]?.usesFixtureData ?? false)
-        describingAttachmentIDs.insert(attachment.id)
-        Task { [weak self] in
+        attachmentDescriptionTasks[attachment.id] = Task { [weak self] in
             var description = await describer.describe(attachment)
             if description == nil, isFixtureContent {
                 // Fixture attachments have no real file on disk; show the demo
@@ -1034,9 +1055,10 @@ final class AppViewModel: ObservableObject {
                 description = await MockImageDescriber().describe(attachment)
             }
             guard let self else { return }
-            self.describingAttachmentIDs.remove(attachment.id)
+            self.attachmentDescriptionTasks[attachment.id] = nil
+            guard !Task.isCancelled else { return }
             if let description {
-                self.attachmentDescriptions[attachment.id] = description
+                self.rememberAttachmentDescription(description, for: attachment.id)
             }
         }
     }
@@ -1382,34 +1404,14 @@ final class AppViewModel: ObservableObject {
     }
 
     func rebuildIndexes() async {
-        indexingProgress = IndexingProgress(
-            isIndexing: true,
-            exactProgress: 0,
-            semanticProgress: 0,
-            lastIndexedAt: indexingProgress.lastIndexedAt,
-            message: "Preparing local index"
+        cancelIndexingTask(message: "Restarting index rebuild")
+        let task = startIndexingTask(
+            exactEnabled: true,
+            semanticEnabled: true,
+            initialMessage: "Preparing local index",
+            completionBanner: true
         )
-
-        do {
-            indexingProgress.message = "Updating exact index"
-            try await dependencies.searchIndexer.rebuildExactIndex { _ in }
-            indexingProgress.exactProgress = 1
-            indexingProgress.message = "Refreshing semantic snippets locally"
-            try await dependencies.searchIndexer.rebuildSemanticIndex { _ in }
-            indexingProgress.semanticProgress = 1
-
-            indexingProgress = IndexingProgress(
-                isIndexing: false,
-                exactProgress: 1,
-                semanticProgress: 1,
-                lastIndexedAt: Date(),
-                message: "Indexes are current"
-            )
-            showBanner(tone: .success, title: "Indexes rebuilt", message: "Exact and semantic indexes finished locally.")
-        } catch {
-            indexingProgress.isIndexing = false
-            showBanner(tone: .error, title: "Indexing failed", message: userFacingMessage(for: error))
-        }
+        await task.value
     }
 
     func toggleOfflineMode() {
@@ -1810,19 +1812,84 @@ final class AppViewModel: ObservableObject {
     func requestContactThumbnail(for contact: Contact?) {
         guard let contact,
               contactThumbnails[contact.id] == nil,
-              !loadingThumbnailIDs.contains(contact.id),
+              !contactThumbnailMisses.contains(contact.id),
+              contactThumbnailTasks[contact.id] == nil,
               let photoProvider = dependencies.contactPhotoProvider
         else {
             return
         }
-        loadingThumbnailIDs.insert(contact.id)
-        Task { [weak self] in
-            let data = try? await photoProvider.thumbnailData(for: contact.id)
-            guard let self else { return }
-            self.loadingThumbnailIDs.remove(contact.id)
-            if let data {
-                self.contactThumbnails[contact.id] = data
+        contactThumbnailTasks[contact.id] = Task { [weak self] in
+            do {
+                let data = try await photoProvider.thumbnailData(for: contact.id)
+                guard let self else { return }
+                self.contactThumbnailTasks[contact.id] = nil
+                guard !Task.isCancelled else { return }
+                if let data {
+                    self.rememberContactThumbnail(data, for: contact.id)
+                } else {
+                    self.rememberMissingContactThumbnail(for: contact.id)
+                }
+            } catch is CancellationError {
+                self?.contactThumbnailTasks[contact.id] = nil
+            } catch {
+                self?.contactThumbnailTasks[contact.id] = nil
             }
+        }
+    }
+
+    private func rememberAttachmentDescription(_ description: String, for id: AttachmentID) {
+        attachmentDescriptions[id] = description
+        touchAttachmentDescriptionCacheEntry(id)
+        trimAttachmentDescriptionCacheIfNeeded()
+    }
+
+    private func touchAttachmentDescriptionCacheEntry(_ id: AttachmentID) {
+        attachmentDescriptionAccessOrder.removeAll { $0 == id }
+        attachmentDescriptionAccessOrder.append(id)
+    }
+
+    private func trimAttachmentDescriptionCacheIfNeeded() {
+        while attachmentDescriptionAccessOrder.count > Self.maxAttachmentDescriptionCacheSize {
+            let expiredID = attachmentDescriptionAccessOrder.removeFirst()
+            attachmentDescriptions[expiredID] = nil
+        }
+    }
+
+    private func rememberContactThumbnail(_ data: Data, for id: ContactID) {
+        contactThumbnails[id] = data
+        contactThumbnailMisses.remove(id)
+        touchContactThumbnailCacheEntry(id)
+        trimContactThumbnailCacheIfNeeded()
+    }
+
+    private func rememberMissingContactThumbnail(for id: ContactID) {
+        contactThumbnailMisses.insert(id)
+        touchContactThumbnailCacheEntry(id)
+        trimContactThumbnailCacheIfNeeded()
+    }
+
+    private func touchContactThumbnailCacheEntry(_ id: ContactID) {
+        contactThumbnailAccessOrder.removeAll { $0 == id }
+        contactThumbnailAccessOrder.append(id)
+    }
+
+    private func trimContactThumbnailCacheIfNeeded() {
+        while contactThumbnailAccessOrder.count > Self.maxContactThumbnailCacheSize {
+            let expiredID = contactThumbnailAccessOrder.removeFirst()
+            contactThumbnails[expiredID] = nil
+            contactThumbnailMisses.remove(expiredID)
+        }
+    }
+
+    private func touchDateMentionCacheEntry(_ id: MessageID) {
+        dateMentionAccessOrder.removeAll { $0 == id }
+        dateMentionAccessOrder.append(id)
+    }
+
+    private func trimDateMentionCacheIfNeeded() {
+        while dateMentionAccessOrder.count > Self.maxDateMentionCacheSize {
+            let expiredID = dateMentionAccessOrder.removeFirst()
+            dateMentionCache[expiredID] = nil
         }
     }
 
@@ -1883,7 +1950,9 @@ final class AppViewModel: ObservableObject {
                         }
                     }
                     await self?.refreshSelectedTranscriptTail()
-                    try? await indexer.invalidateIndex(for: nil)
+                    try Task.checkCancellation()
+                    try await indexer.invalidateIndex(for: nil)
+                    try Task.checkCancellation()
                     await MainActor.run { [weak self] in
                         self?.startBackgroundIndexingIfNeeded()
                     }
@@ -1900,6 +1969,7 @@ final class AppViewModel: ObservableObject {
 
     private func startBackgroundIndexingIfNeeded() {
         guard settings.search.exactIndexEnabled || settings.search.semanticIndexEnabled else {
+            cancelIndexingTask(message: "Indexing disabled")
             indexingProgress = IndexingProgress(
                 isIndexing: false,
                 exactProgress: 0,
@@ -1913,64 +1983,117 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        startIndexingTask(
+            exactEnabled: settings.search.exactIndexEnabled,
+            semanticEnabled: settings.search.semanticIndexEnabled,
+            initialMessage: "Indexing in background",
+            completionBanner: false
+        )
+    }
+
+    private func cancelIndexingTask(message: String) {
+        indexingTaskGeneration += 1
+        indexingTask?.cancel()
+        indexingTask = nil
+        if indexingProgress.isIndexing {
+            indexingProgress.isIndexing = false
+            indexingProgress.message = message
+        }
+    }
+
+    @discardableResult
+    private func startIndexingTask(
+        exactEnabled: Bool,
+        semanticEnabled: Bool,
+        initialMessage: String,
+        completionBanner: Bool
+    ) -> Task<Void, Never> {
+        indexingTaskGeneration += 1
+        let generation = indexingTaskGeneration
         let indexer = dependencies.searchIndexer
-        let exactEnabled = settings.search.exactIndexEnabled
-        let semanticEnabled = settings.search.semanticIndexEnabled
-        indexingTask = Task { [weak self] in
+        let lastIndexedAt = indexingProgress.lastIndexedAt
+
+        let task = Task { [weak self] in
             await MainActor.run { [weak self] in
-                self?.indexingProgress = IndexingProgress(
+                guard let self, self.indexingTaskGeneration == generation else { return }
+                self.indexingProgress = IndexingProgress(
                     isIndexing: true,
                     exactProgress: exactEnabled ? 0 : 1,
                     semanticProgress: semanticEnabled ? 0 : 1,
-                    lastIndexedAt: self?.indexingProgress.lastIndexedAt,
-                    message: "Indexing in background"
+                    lastIndexedAt: lastIndexedAt,
+                    message: initialMessage
                 )
             }
 
             do {
                 if exactEnabled {
+                    try Task.checkCancellation()
                     try await indexer.rebuildExactIndex { _ in }
                 }
 
                 if semanticEnabled {
+                    try Task.checkCancellation()
                     await MainActor.run { [weak self] in
-                        self?.indexingProgress.exactProgress = 1
-                        self?.indexingProgress.message = "Indexing semantic search"
+                        guard let self, self.indexingTaskGeneration == generation else { return }
+                        self.indexingProgress.exactProgress = exactEnabled ? 1 : 0
+                        self.indexingProgress.message = "Indexing semantic search"
                     }
                     try await indexer.rebuildSemanticIndex { _ in }
                 }
 
+                try Task.checkCancellation()
                 await MainActor.run { [weak self] in
-                    self?.indexingProgress = IndexingProgress(
+                    guard let self, self.indexingTaskGeneration == generation else { return }
+                    self.indexingProgress = IndexingProgress(
                         isIndexing: false,
                         exactProgress: exactEnabled ? 1 : 0,
                         semanticProgress: semanticEnabled ? 1 : 0,
                         lastIndexedAt: Date(),
                         message: "Indexes are current"
                     )
-                    self?.indexingTask = nil
+                    self.indexingTask = nil
+                    if completionBanner {
+                        self.showBanner(tone: .success, title: "Indexes rebuilt", message: "Exact and semantic indexes finished locally.")
+                    }
                 }
             } catch is CancellationError {
                 await MainActor.run { [weak self] in
-                    self?.indexingTask = nil
+                    guard let self, self.indexingTaskGeneration == generation else { return }
+                    self.indexingProgress.isIndexing = false
+                    self.indexingProgress.message = "Indexing cancelled"
+                    self.indexingTask = nil
                 }
             } catch {
                 await MainActor.run { [weak self] in
-                    self?.indexingProgress.isIndexing = false
-                    self?.indexingProgress.message = "Indexing paused"
-                    self?.indexingTask = nil
+                    guard let self, self.indexingTaskGeneration == generation else { return }
+                    self.indexingProgress.isIndexing = false
+                    self.indexingProgress.message = "Indexing paused"
+                    self.indexingTask = nil
+                    if completionBanner {
+                        self.showBanner(tone: .error, title: "Indexing failed", message: self.userFacingMessage(for: error))
+                    }
                 }
             }
         }
+        indexingTask = task
+        return task
     }
 
     /// After a live send, fold the store's real row into the transcript once
     /// Messages has written it. Tail-merging (instead of a reset reload) keeps
     /// the scroll position and avoids a visible loading flash.
     private func scheduleTranscriptReload() {
-        Task { [weak self] in
+        transcriptReloadTask?.cancel()
+        transcriptReloadSequence += 1
+        let sequence = transcriptReloadSequence
+        transcriptReloadTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
             await self?.refreshSelectedTranscriptTail()
+            await MainActor.run { [weak self] in
+                guard let self, self.transcriptReloadSequence == sequence else { return }
+                self.transcriptReloadTask = nil
+            }
         }
     }
 
@@ -1981,6 +2104,12 @@ final class AppViewModel: ObservableObject {
     func refreshSelectedTranscriptTail() async {
         guard dependencies.isLiveData, let conversationID = selectedConversationID else {
             return
+        }
+        guard refreshingTranscriptTailConversationIDs.insert(conversationID).inserted else {
+            return
+        }
+        defer {
+            refreshingTranscriptTailConversationIDs.remove(conversationID)
         }
         let state = transcriptPages[conversationID] ?? .empty
         guard state.phase == .loaded, !state.usesFixtureData else {

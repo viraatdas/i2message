@@ -220,3 +220,10 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode still reports CoreSimulator 1051.54.0 older than build 1051.55.0 during generation/test/build, though all required commands passed.
 - **By:** n13 · 2026-07-08T04:10:25.034Z
 
+## n14: Completed final integration QA for reply removal, emoji, swipe, scroll, and lifecycle polish
+- **Did:** Resolved the remaining DECISIONS.md conflict, tightened thread-panel accessibility labels and hints, removed a Swift warning in swipe reset handling, confirmed docs matched the current UI contracts, and verified no stale inline-reply UI references or sensitive logging in changed files.
+- **Interfaces:** DECISIONS.md; ThreadPanelView accessibility labels/hints for thread composer, send, and close controls; ConversationDetailView resetSwipeState explicit resetGesture discard. Existing AppViewModel, EmojiPicker, ThreadSwipeGestureState, TranscriptScrollIntent, and lifecycle task-ownership contracts are preserved.
+- **Verified:** ./scripts/generate-xcodeproj.sh, ./scripts/build.sh, ./scripts/test.sh, and ./scripts/run-mock-app.sh all passed. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning; AppIntents metadata extraction is skipped because the app has no AppIntents dependency.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, build, tests, or mock launch.
+- **By:** n14 · 2026-07-08T04:22:09Z

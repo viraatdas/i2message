@@ -273,10 +273,10 @@ private struct TranscriptView: View {
 
         if animated {
             withAnimation(I2Motion.swipeReset(reduceMotion: reduceMotion)) {
-                swipeState.resetGesture()
+                _ = swipeState.resetGesture()
             }
         } else {
-            swipeState.resetGesture()
+            _ = swipeState.resetGesture()
         }
     }
 
