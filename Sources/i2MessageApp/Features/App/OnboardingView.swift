@@ -175,7 +175,7 @@ private struct OnboardingPage {
             systemImage: "message.fill",
             shortcuts: [
                 ShortcutRow(keys: ["⌘", "N"], action: "New message"),
-                ShortcutRow(keys: ["⌘", "↩"], action: "Send"),
+                ShortcutRow(keys: ["↩"], action: "Send"),
                 ShortcutRow(keys: ["⌘", "/"], action: "Reopen this tour any time"),
             ],
             demo: AnyView(WelcomeDemo())
@@ -197,7 +197,7 @@ private struct OnboardingPage {
             systemImage: "bubble.left.and.text.bubble.right",
             shortcuts: [
                 ShortcutRow(keys: ["⇠ swipe"], action: "Open or start a thread"),
-                ShortcutRow(keys: ["⌘", "↩"], action: "Send the thread reply"),
+                ShortcutRow(keys: ["↩"], action: "Send the thread reply"),
                 ShortcutRow(keys: ["esc"], action: "Close the thread panel"),
             ],
             demo: AnyView(ThreadSwipeDemo())
@@ -209,8 +209,8 @@ private struct OnboardingPage {
             shortcuts: [
                 ShortcutRow(keys: ["⌘", "F"], action: "Search this chat"),
                 ShortcutRow(keys: ["⌘", "⇧", "P"], action: "Search every chat"),
-                ShortcutRow(keys: ["⌘", "⇧", "K"], action: "Flip exact ↔ semantic"),
                 ShortcutRow(keys: ["⌘", "K"], action: "Command palette"),
+                ShortcutRow(keys: ["esc"], action: "Close any overlay"),
             ],
             demo: AnyView(SearchDemo())
         ),

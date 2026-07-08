@@ -77,9 +77,8 @@ struct ThreadPanelView: View {
             }
             .buttonStyle(.borderedProminent)
             .labelStyle(.iconOnly)
-            .keyboardShortcut(.return, modifiers: [.command])
             .disabled(!model.canSendThreadReply)
-            .help("Send reply in thread")
+            .help("Send reply in thread (Return)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

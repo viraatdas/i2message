@@ -61,9 +61,13 @@ struct ContentView: View {
             return .handled
         }
         .onKeyPress(.escape) {
-            guard model.isThreadPanelPresented, !anyOverlayPresented else { return .ignored }
-            model.closeThread()
-            return .handled
+            model.dismissTopmostOverlay() ? .handled : .ignored
+        }
+        // Text fields swallow the raw Esc key and forward it as
+        // cancelOperation instead — catch that path too so Esc closes
+        // overlays even while typing in them.
+        .onExitCommand {
+            model.dismissTopmostOverlay()
         }
         .animation(I2Motion.sidebar(reduceMotion: reduceMotion), value: model.sidebarMode)
         .animation(I2Motion.overlay(reduceMotion: reduceMotion), value: model.isThreadPanelPresented)

@@ -409,6 +409,36 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.isOffline)
         XCTAssertFalse(model.isCommandPalettePresented)
     }
+
+    func testEscapeDismissesOverlaysTopmostFirst() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        // Nothing open → Esc passes through.
+        XCTAssertFalse(model.dismissTopmostOverlay())
+
+        // Thread panel under an overlay: overlay closes first, thread second.
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        model.openThread(rootID: root.id)
+        model.openCommandPalette()
+
+        XCTAssertTrue(model.dismissTopmostOverlay())
+        XCTAssertFalse(model.isCommandPalettePresented)
+        XCTAssertTrue(model.isThreadPanelPresented)
+
+        XCTAssertTrue(model.dismissTopmostOverlay())
+        XCTAssertFalse(model.isThreadPanelPresented)
+        XCTAssertFalse(model.dismissTopmostOverlay())
+
+        // Each remaining overlay closes with one Esc.
+        model.openNewMessage()
+        XCTAssertTrue(model.dismissTopmostOverlay())
+        XCTAssertFalse(model.isNewMessagePresented)
+
+        model.isSettingsPresented = true
+        XCTAssertTrue(model.dismissTopmostOverlay())
+        XCTAssertFalse(model.isSettingsPresented)
+    }
 }
 
 /// Wraps the fixture repository with a mutable overlay so tests can simulate

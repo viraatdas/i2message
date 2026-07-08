@@ -179,9 +179,19 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
     }
 
     private func mapContact(_ cnContact: CNContact) -> Contact {
-        let displayName = CNContactFormatter.string(from: cnContact, style: .fullName)
-            ?? [cnContact.givenName, cnContact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
-        let resolvedDisplayName = displayName.isEmpty ? "Unknown Contact" : displayName
+        // CNContact raises an uncatchable NSException when the formatter asks
+        // for a key that wasn't fetched, so only use it when every required
+        // key is verifiably present; otherwise compose the name by hand.
+        let formatterKeys = CNContactFormatter.descriptorForRequiredKeys(for: .fullName)
+        let formattedName = cnContact.areKeysAvailable([formatterKeys])
+            ? CNContactFormatter.string(from: cnContact, style: .fullName)
+            : nil
+        let displayName = formattedName
+            ?? [cnContact.givenName, cnContact.middleName, cnContact.familyName]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        let organizationFallback = displayName.isEmpty ? cnContact.organizationName : displayName
+        let resolvedDisplayName = organizationFallback.isEmpty ? "Unknown Contact" : organizationFallback
 
         var handles: [ContactHandle] = []
         handles.reserveCapacity(cnContact.phoneNumbers.count + cnContact.emailAddresses.count)
@@ -221,6 +231,9 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
 
     private static func keysToFetch() -> [CNKeyDescriptor] {
         [
+            // Everything CNContactFormatter needs (name order, contact type,
+            // phonetic fields, …) — omitting it makes the formatter raise.
+            CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
             CNContactIdentifierKey as CNKeyDescriptor,
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactFamilyNameKey as CNKeyDescriptor,

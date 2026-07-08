@@ -162,7 +162,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
     case newMessage
     case openSearch
     case searchCurrentChat
-    case toggleSemantic
     case nextConversation
     case previousConversation
     case openSettings
@@ -181,8 +180,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
             return "Search All Chats"
         case .searchCurrentChat:
             return "Search This Chat"
-        case .toggleSemantic:
-            return "Toggle Semantic Search"
         case .nextConversation:
             return "Next Conversation"
         case .previousConversation:
@@ -208,8 +205,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
             return "Search every conversation at once"
         case .searchCurrentChat:
             return "Search only the selected conversation"
-        case .toggleSemantic:
-            return "Switch between phrase search and local meaning search"
         case .nextConversation, .previousConversation:
             return "Keyboard-first conversation navigation"
         case .openSettings:
@@ -233,8 +228,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
             return "magnifyingglass"
         case .searchCurrentChat:
             return "text.magnifyingglass"
-        case .toggleSemantic:
-            return "sparkles"
         case .nextConversation:
             return "arrow.down"
         case .previousConversation:
@@ -260,8 +253,6 @@ enum AppCommand: String, CaseIterable, Identifiable {
             return "⌘⇧P"
         case .searchCurrentChat:
             return "⌘F"
-        case .toggleSemantic:
-            return "⌘⇧K"
         case .nextConversation:
             return "⌘↓"
         case .previousConversation:

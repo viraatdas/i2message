@@ -453,6 +453,34 @@ final class AppViewModel: ObservableObject {
         newMessageSuggestions = []
     }
 
+    /// Esc anywhere: dismiss whatever is on top, one layer at a time.
+    /// Returns false when nothing was open (so the key can pass through).
+    @discardableResult
+    func dismissTopmostOverlay() -> Bool {
+        if isOnboardingPresented {
+            isOnboardingPresented = false
+            // Same flag ContentView's finish closure writes via @AppStorage.
+            UserDefaults.standard.set(true, forKey: "hasSeenShortcutTour")
+        } else if isCommandPalettePresented {
+            closeCommandPalette()
+        } else if isSearchOverlayPresented {
+            isSearchOverlayPresented = false
+        } else if isNewMessagePresented {
+            closeNewMessage()
+        } else if isInfoPanelPresented {
+            isInfoPanelPresented = false
+        } else if isReminderPresented {
+            closeReminderPanel()
+        } else if isSettingsPresented {
+            isSettingsPresented = false
+        } else if isThreadPanelPresented {
+            closeThread()
+        } else {
+            return false
+        }
+        return true
+    }
+
     /// Live-searches the full address book (falling back to loaded contacts)
     /// for the recipient picker.
     func updateNewMessageQuery(_ text: String) async {
@@ -1365,8 +1393,6 @@ final class AppViewModel: ObservableObject {
             openSearchOverlay(scopedToCurrentConversation: false)
         case .searchCurrentChat:
             openSearchOverlay(scopedToCurrentConversation: true)
-        case .toggleSemantic:
-            await toggleSemanticSearch()
         case .nextConversation:
             await selectAdjacentConversation(offset: 1)
         case .previousConversation:

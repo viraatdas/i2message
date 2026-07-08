@@ -928,9 +928,8 @@ private struct ComposerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .labelStyle(.iconOnly)
-                .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(!model.canSendCurrentDraft)
-                .help("Send")
+                .help("Send (Return)")
             }
 
         }

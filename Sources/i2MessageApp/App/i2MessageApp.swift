@@ -93,11 +93,6 @@ struct i2MessageApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
 
-                Button(model.searchMode == .semantic ? "Use Exact Search" : "Use Semantic Search") {
-                    Task { await model.perform(.toggleSemantic) }
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-
                 Divider()
 
                 Button("Command Palette") {
