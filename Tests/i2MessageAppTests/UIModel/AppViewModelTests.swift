@@ -16,6 +16,17 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.selectedTranscriptState.hasMoreOlder)
     }
 
+    func testInitialLoadRequestsBottomScrollToNewestVisibleMessage() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let intent = try XCTUnwrap(model.transcriptScrollIntent)
+        XCTAssertEqual(intent.conversationID, try XCTUnwrap(model.selectedConversationID))
+        XCTAssertEqual(intent.messageID, model.visibleTranscriptMessages.last?.id)
+        XCTAssertEqual(intent.anchor, .bottom)
+        XCTAssertEqual(intent.reason, .initialLoad)
+    }
+
     func testConversationScopesAndQuickFilter() async {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
@@ -37,11 +48,16 @@ final class AppViewModelTests: XCTestCase {
 
         let beforeCount = model.selectedMessages.count
         let beforeFirst = try XCTUnwrap(model.selectedMessages.first?.sentAt)
+        let previousTopVisibleMessageID = try XCTUnwrap(model.visibleTranscriptMessages.first?.id)
 
         await model.loadOlderMessages()
 
         XCTAssertGreaterThan(model.selectedMessages.count, beforeCount)
         XCTAssertLessThan(try XCTUnwrap(model.selectedMessages.first?.sentAt), beforeFirst)
+        let intent = try XCTUnwrap(model.transcriptScrollIntent)
+        XCTAssertEqual(intent.messageID, previousTopVisibleMessageID)
+        XCTAssertEqual(intent.anchor, .top)
+        XCTAssertEqual(intent.reason, .olderPage)
     }
 
     func testExactSearchPagesAndOpensResult() async throws {
@@ -67,6 +83,13 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.sidebarDestination, .conversations)
         XCTAssertEqual(model.selectedConversationID, result.conversationID)
+        let conversationID = try XCTUnwrap(result.conversationID)
+        let messageID = try XCTUnwrap(result.messageID)
+        let intent = try XCTUnwrap(model.transcriptScrollIntent)
+        XCTAssertEqual(intent.conversationID, conversationID)
+        XCTAssertEqual(intent.messageID, messageID)
+        XCTAssertEqual(intent.anchor, .center)
+        XCTAssertEqual(intent.reason, .searchResult)
     }
 
     func testSemanticSearchReturnsLocalSnippets() async {
@@ -97,6 +120,11 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertGreaterThan(model.selectedMessages.count, beforeCount)
         XCTAssertEqual(model.selectedMessages.last?.body.plainText, "This is a mock send.")
         XCTAssertNil(model.selectedMessages.last?.replyToMessageID)
+        XCTAssertNil(model.highlightedMessageID)
+        let intent = try XCTUnwrap(model.transcriptScrollIntent)
+        XCTAssertEqual(intent.messageID, model.selectedMessages.last?.id)
+        XCTAssertEqual(intent.anchor, .bottom)
+        XCTAssertEqual(intent.reason, .localSend)
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
@@ -134,6 +162,9 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.visibleTranscriptMessages.contains { $0.id == reply.id })
         XCTAssertTrue(model.visibleTranscriptMessages.contains { $0.id == root.id })
 
+        model.highlightedMessageID = reply.id
+        XCTAssertTrue(model.visibleTranscriptMessages.contains { $0.id == reply.id })
+
         // …but appears in the thread panel with its root first.
         model.openThread(rootID: root.id)
         XCTAssertTrue(model.isThreadPanelPresented)
@@ -151,10 +182,29 @@ final class AppViewModelTests: XCTestCase {
 
         model.threadDraftText = "sent from the thread pane"
         XCTAssertTrue(model.canSendThreadReply)
+        let previousScrollIntent = model.transcriptScrollIntent
         await model.sendThreadReply()
 
         let sent = try XCTUnwrap(model.selectedMessages.last)
         XCTAssertEqual(sent.replyToMessageID, root.id)
+        XCTAssertTrue(model.threadDraftText.isEmpty)
+        XCTAssertEqual(model.transcriptScrollIntent, previousScrollIntent)
+    }
+
+    func testChangingConversationClosesThreadPanel() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let root = try XCTUnwrap(model.selectedMessages.first)
+        let nextConversation = try XCTUnwrap(model.conversations.first { $0.id != model.selectedConversationID })
+
+        model.openThread(rootID: root.id)
+        model.threadDraftText = "partial reply"
+
+        await model.selectConversation(nextConversation.id)
+
+        XCTAssertFalse(model.isThreadPanelPresented)
+        XCTAssertNil(model.threadRootID)
         XCTAssertTrue(model.threadDraftText.isEmpty)
     }
 
@@ -197,8 +247,10 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(before.isEmpty)
 
         // No changes in the store → transcript untouched.
+        let previousScrollIntent = model.transcriptScrollIntent
         await model.refreshSelectedTranscriptTail()
         XCTAssertEqual(model.selectedMessages.map(\.id), before.map(\.id))
+        XCTAssertEqual(model.transcriptScrollIntent, previousScrollIntent)
 
         // A live arrival lands at the tail while loaded history is retained.
         repository.add(
@@ -218,6 +270,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.selectedMessages.last?.id, MessageID(rawValue: "live-arrival"))
         XCTAssertTrue(Set(model.selectedMessages.map(\.id)).isSuperset(of: Set(before.map(\.id))))
         XCTAssertEqual(model.selectedMessages.count, before.count + 1)
+        XCTAssertEqual(model.transcriptScrollIntent, previousScrollIntent)
     }
 
     func testNewMessageStagesPendingConversationForRawHandle() async throws {

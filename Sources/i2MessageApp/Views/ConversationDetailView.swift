@@ -69,14 +69,15 @@ private struct ConversationHeader: View {
 
 private struct TranscriptView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let conversation: Conversation
 
     // Two-finger swipe on a bubble opens its thread. Trackpad swipes arrive as
     // scroll-wheel events with a dominant deltaX, so a local event monitor
-    // accumulates horizontal travel over the hovered message.
-    @State private var hoveredMessageID: MessageID?
-    @State private var swipeTranslation: CGFloat = 0
+    // tracks horizontal intent over the hovered message.
+    @State private var swipeState = ThreadSwipeGestureState()
     @State private var swipeMonitor: Any?
+    @State private var handledScrollIntentSequence = 0
 
     var body: some View {
         let state = model.selectedTranscriptState
@@ -108,7 +109,9 @@ private struct TranscriptView: View {
     }
 
     private func transcriptScroll(messages: [Message], state: TranscriptPageState) -> some View {
-        ScrollViewReader { proxy in
+        let messageIDs = messages.map(\.id)
+
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     HStack {
@@ -149,13 +152,9 @@ private struct TranscriptView: View {
                         }
                         .onHover { hovering in
                             if hovering {
-                                if hoveredMessageID != message.id {
-                                    hoveredMessageID = message.id
-                                    swipeTranslation = 0
-                                }
-                            } else if hoveredMessageID == message.id {
-                                hoveredMessageID = nil
-                                swipeTranslation = 0
+                                swipeState.setHoveredMessageID(message.id)
+                            } else if swipeState.hoveredMessageID == message.id {
+                                swipeState.setHoveredMessageID(nil)
                             }
                         }
                     }
@@ -165,42 +164,47 @@ private struct TranscriptView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .onAppear {
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
                 installSwipeMonitor()
             }
             .onDisappear {
                 removeSwipeMonitor()
+                resetSwipeState(animated: false)
             }
-            .onChange(of: model.highlightedMessageID) { _, _ in
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            .onChange(of: conversation.id) { _, _ in
+                resetSwipeState(animated: false)
             }
-            .onChange(of: messages.last?.id) { _, _ in
-                scrollToRelevantMessage(proxy: proxy, messages: messages)
+            .onChange(of: messageIDs) { _, ids in
+                if let hoveredMessageID = swipeState.hoveredMessageID,
+                   !ids.contains(hoveredMessageID) {
+                    resetSwipeState(animated: false)
+                }
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
+            }
+            .onChange(of: model.transcriptScrollIntent) { _, _ in
+                applyTranscriptScrollIntent(proxy: proxy, messages: messages)
             }
         }
     }
 
-    private static let swipeTriggerDistance: CGFloat = 90
-
     private func swipeOffset(for message: Message) -> CGFloat {
-        guard hoveredMessageID == message.id, message.direction != .system else {
+        guard !reduceMotion,
+              swipeState.hoveredMessageID == message.id,
+              message.direction != .system else {
             return 0
         }
-        // Ease the bubble along with the swipe, capped so it stays subtle.
-        return max(-44, min(44, swipeTranslation * 0.45))
+        return swipeState.visualOffset
     }
 
     /// Thread hint that fades in as the swipe progresses.
     @ViewBuilder
     private func swipeAffordance(for message: Message) -> some View {
-        let progress = hoveredMessageID == message.id
-            ? min(1, abs(swipeTranslation) / Self.swipeTriggerDistance)
-            : 0
+        let progress = swipeState.hoveredMessageID == message.id ? swipeState.progress : 0
         if progress > 0.05, message.direction != .system {
             Image(systemName: "arrowshape.turn.up.left.circle.fill")
                 .font(.title3)
                 .foregroundStyle(Color.accentColor.opacity(0.35 + 0.65 * progress))
-                .scaleEffect(0.7 + 0.3 * progress)
+                .scaleEffect(reduceMotion ? 1 : 0.7 + 0.3 * progress)
                 .padding(.horizontal, 4)
                 .allowsHitTesting(false)
         }
@@ -223,49 +227,88 @@ private struct TranscriptView: View {
     }
 
     /// Routes trackpad scroll events: vertical deltas pass through untouched;
-    /// horizontal travel over a hovered bubble becomes the swipe-to-thread
-    /// gesture and is consumed so the scroll view doesn't rubber-band.
+    /// momentum passes through untouched; horizontal travel over a hovered
+    /// bubble becomes the swipe-to-thread gesture after intent is clear.
     private func handleSwipeEvent(_ event: NSEvent) -> NSEvent? {
-        guard let hoveredMessageID else {
+        guard event.hasPreciseScrollingDeltas else {
+            resetSwipeState(animated: false)
             return event
         }
 
-        let horizontal = event.scrollingDeltaX
-        let vertical = event.scrollingDeltaY
+        let phase = ThreadSwipeGestureState.ScrollPhase(event: event)
+        var update = ThreadSwipeGestureState.Update.passThrough
 
-        if event.phase == .ended || event.phase == .cancelled || event.momentumPhase != [] {
-            if swipeTranslation != 0 {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    swipeTranslation = 0
-                }
+        if (phase == .ended || phase == .cancelled || phase == .momentum), swipeState.isTracking {
+            withAnimation(I2Motion.swipeReset(reduceMotion: reduceMotion)) {
+                update = swipeState.handleScroll(
+                    deltaX: event.scrollingDeltaX,
+                    deltaY: event.scrollingDeltaY,
+                    phase: phase
+                )
             }
-            return event
+        } else {
+            update = swipeState.handleScroll(
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY,
+                phase: phase
+            )
         }
 
-        guard abs(horizontal) > abs(vertical), abs(horizontal) > 0.5 else {
-            if abs(vertical) > 2, swipeTranslation != 0 {
-                swipeTranslation = 0
-            }
-            return event
-        }
-
-        swipeTranslation += horizontal
-        if abs(swipeTranslation) >= Self.swipeTriggerDistance {
-            swipeTranslation = 0
-            if let message = model.visibleTranscriptMessages.first(where: { $0.id == hoveredMessageID }),
-               message.direction != .system {
+        if let openedMessageID = update.openedMessageID,
+           let message = model.visibleTranscriptMessages.first(where: { $0.id == openedMessageID }),
+           message.direction != .system {
+            if !reduceMotion {
                 NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                model.openThread(for: message)
             }
+            model.openThread(for: message)
         }
-        return nil
+
+        return update.shouldConsumeEvent ? nil : event
     }
 
-    private func scrollToRelevantMessage(proxy: ScrollViewProxy, messages: [Message]) {
-        if let highlighted = model.highlightedMessageID {
-            proxy.scrollTo(highlighted, anchor: .center)
-        } else if let last = messages.last?.id {
-            proxy.scrollTo(last, anchor: .bottom)
+    private func resetSwipeState(animated: Bool) {
+        guard swipeState.isTracking else {
+            return
+        }
+
+        if animated {
+            withAnimation(I2Motion.swipeReset(reduceMotion: reduceMotion)) {
+                swipeState.resetGesture()
+            }
+        } else {
+            swipeState.resetGesture()
+        }
+    }
+
+    private func applyTranscriptScrollIntent(proxy: ScrollViewProxy, messages: [Message]) {
+        guard let intent = model.transcriptScrollIntent,
+              intent.conversationID == conversation.id,
+              intent.sequence != handledScrollIntentSequence,
+              messages.contains(where: { $0.id == intent.messageID }) else {
+            return
+        }
+
+        let scroll = {
+            proxy.scrollTo(intent.messageID, anchor: unitPoint(for: intent.anchor))
+        }
+        if let animation = I2Motion.stateChange(reduceMotion: reduceMotion) {
+            withAnimation(animation) {
+                scroll()
+            }
+        } else {
+            scroll()
+        }
+        handledScrollIntentSequence = intent.sequence
+    }
+
+    private func unitPoint(for anchor: TranscriptScrollAnchor) -> UnitPoint {
+        switch anchor {
+        case .top:
+            return .top
+        case .center:
+            return .center
+        case .bottom:
+            return .bottom
         }
     }
 
@@ -297,6 +340,20 @@ private struct TranscriptView: View {
     private func isGroupEnd(at index: Int, messages: [Message]) -> Bool {
         guard index < messages.count - 1 else { return true }
         return isGroupStart(at: index + 1, messages: messages)
+    }
+}
+
+private extension ThreadSwipeGestureState.ScrollPhase {
+    init(event: NSEvent) {
+        if event.momentumPhase != [] {
+            self = .momentum
+        } else if event.phase == .ended {
+            self = .ended
+        } else if event.phase == .cancelled {
+            self = .cancelled
+        } else {
+            self = .changed
+        }
     }
 }
 

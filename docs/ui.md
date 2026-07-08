@@ -6,9 +6,10 @@ The SwiftUI shell is built around `AppViewModel` in `Sources/i2MessageApp/Featur
 
 - Conversations sidebar with all/unread/pinned/muted filters, unread badges, pinned/muted indicators, attachment hints, stable row sizing, and keyboard next/previous selection.
 - Contacts workspace with handle details, shared thread navigation, contact search, and mock message actions.
-- Transcript detail with lazy `ScrollView`/`LazyVStack` rows, older-page loading, highlighted search result scrolling, emoji tapback badges on bubble corners, a per-bubble context menu (standard tapbacks, fixture-only custom emoji reactions, open thread for threaded messages, copy), quoted reply context with jump-to-original, edited/failed states, and attachment transfer states.
+- Transcript detail with lazy `ScrollView`/`LazyVStack` rows, older-page loading that preserves the previous top visible message, explicit highlighted search result scrolling, local-send bottom scrolling, emoji tapback badges on bubble corners, a per-bubble context menu (standard tapbacks, fixture-only custom emoji reactions, open thread for threaded messages, copy), quoted reply context with jump-to-original, edited/failed states, and attachment transfer states.
+- Swipe-to-thread uses a local trackpad scroll monitor only while the transcript is visible, separates horizontal intent from vertical scrolling, passes momentum and vertical deltas through to the transcript, opens at most one thread per gesture, and clears partial swipe state on hover, conversation, message-list, disappear, or gesture-end changes. Reduced Motion removes bubble movement and animated scroll/panel movement.
 - Composer with draft text, attachment/drop intake, auto-growing text field, an emoji control with common emoji, arbitrary emoji entry, and macOS Character Viewer handoff, Return-to-send (Shift-Return inserts a newline, Command-Return also sends), validation errors, safe Messages.app send/handoff in live mode, and fixture sent-message insertion in tests/previews through `MessageSending`. The main transcript composer always sends normal conversation messages; anchored replies are panel-only.
-- Docked thread panel with root-plus-replies transcript, its own `Reply in thread` composer with the same explicit emoji insertion control, Return-to-send, unread-thread activity state, and focused close behavior.
+- Docked thread panel with root-plus-replies transcript, its own `Reply in thread` composer with the same explicit emoji insertion control, Return-to-send, unread-thread activity state, focused close behavior, and a fixed-width opacity dock that avoids a competing slide transition.
 - Exact search workspace with scoped conversation search, paged result loading, result previews, attachment/contact/conversation hits, and highlighted snippets.
 - Semantic search workspace with local mock snippets, similarity labels, source message counts, hybrid mode, and transcript jump targets.
 - Settings window/sheet for theme, transcript density, page size, permissions, exact/semantic index toggles, privacy defaults, indexing progress, and diagnostics/offline/error states.
@@ -35,6 +36,7 @@ Custom emoji reactions use `MessageReactionKind.custom` with `displayText` only 
 ## Performance Shape
 
 - Transcript rows are lazy and load only the visible page plus explicitly requested older pages.
+- Transcript scroll movement is driven by explicit intents from `AppViewModel`: initial/reset loads go to the newest visible message, search routes center the highlighted row, older-page prepends keep the previous top visible row anchored, and passive live tail refreshes do not snap readers to the bottom.
 - Search results are paged with `PageCursor`; semantic snippets are limited by query.
 - Attachments render as lightweight chips in the transcript and inspector. Future image thumbnail loading should stay lazy at the attachment component boundary.
 - UI state is keyed by `ConversationID`, so loading older messages or sending in one thread does not replace every transcript.

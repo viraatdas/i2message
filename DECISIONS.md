@@ -190,3 +190,10 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode still warns CoreSimulator 1051.54.0 is older than build 1051.55.0; macOS generation, tests, build, and mock launch all passed despite it.
 - **By:** n11 · 2026-07-08T02:57:15.197Z
 
+## n12: Replaced broad transcript auto-scroll with explicit scroll intents
+- **Did:** Added `TranscriptScrollIntent` state so the main transcript scrolls only for initial/reset loads, explicit search anchors, older-page preservation, and visible local sends. Older-page prepends now keep the previous top visible message anchored; passive live tail refreshes merge without bottom snapping; highlighted thread replies stay visible for search routing while normal thread replies remain folded out of the main transcript. Resolved the inherited `DECISIONS.md` conflict by preserving n10/n11 entries.
+- **Interfaces:** `TranscriptScrollIntent`, `TranscriptScrollAnchor`, and `TranscriptScrollReason` in `AppViewState`; `AppViewModel.transcriptScrollIntent`; `visibleTranscriptMessages` highlight exception; `ConversationDetailView` scroll-intent handling; UI-model regression coverage in `AppViewModelTests`; updated `docs/ui.md` and `docs/performance.md` scroll contracts.
+- **Verified:** `./scripts/generate-xcodeproj.sh`, `./scripts/test.sh`, `./scripts/build.sh`, and the isolated synthetic performance test passed. Latest synthetic report: launch 0.316s, older-page load 0.0018s, exact search 0.0029s, semantic search 0.356s, transcript route 0.0006s on the 120-conversation/12,000-message fixture. Xcode still reports the existing non-blocking CoreSimulator 1051.54.0 vs 1051.55.0 warning.
+- **Follow-ups:**
+  - Update local CoreSimulator install [out of lane] — The warning remains unchanged and did not block macOS generation, tests, build, or synthetic performance verification.
+- **By:** n12 · 2026-07-08T03:56:00Z
