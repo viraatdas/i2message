@@ -159,6 +159,30 @@ final class LocalSearchServiceTests: XCTestCase {
         XCTAssertEqual(complete.pendingSemanticEmbeddingCount, 0)
     }
 
+    func testRepeatedExactRebuildPreservesSemanticEmbeddings() async throws {
+        // Regression: the live-data observer re-runs the exact rebuild whenever the
+        // Messages DB changes. If that rebuild rewrites unchanged documents it
+        // cascade-deletes their semantic embeddings, forcing a full corpus re-embed
+        // on every message — the source of the background-indexing churn.
+        let service = SearchTestFixtures.service(
+            corpus: SearchTestFixtures.focusedCorpus(),
+            embedder: HashingSemanticEmbedder(dimension: 96)
+        )
+        try await service.rebuildExactIndex { _ in }
+        try await service.rebuildSemanticIndex { _ in }
+
+        let indexed = try await service.localIndexState()
+        XCTAssertGreaterThan(indexed.semanticEmbeddingCount, 0)
+        XCTAssertEqual(indexed.pendingSemanticEmbeddingCount, 0)
+
+        // Re-running the exact rebuild over the same corpus must not invalidate
+        // the embeddings that are already up to date.
+        try await service.rebuildExactIndex { _ in }
+        let afterRerun = try await service.localIndexState()
+        XCTAssertEqual(afterRerun.semanticEmbeddingCount, indexed.semanticEmbeddingCount)
+        XCTAssertEqual(afterRerun.pendingSemanticEmbeddingCount, 0)
+    }
+
     func testExactSearchFirstPageIsFastOnSyntheticLargeFixture() async throws {
         let service = SearchTestFixtures.service(
             corpus: SearchTestFixtures.largeCorpus(messageCount: 8_000, needleEvery: 40),

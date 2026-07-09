@@ -3,23 +3,47 @@ import AVFoundation
 import SwiftUI
 import i2MessageCore
 
+private final class LinkifiedString {
+    let value: AttributedString
+    init(_ value: AttributedString) { self.value = value }
+}
+
 extension String {
     private static let linkDetector = try? NSDataDetector(
         types: NSTextCheckingResult.CheckingType.link.rawValue
     )
 
+    // Running NSDataDetector is comparatively expensive and every transcript
+    // render re-reads this for each visible bubble, so results are memoized by
+    // the message text.
+    // NSCache is thread-safe for concurrent reads/writes; the annotation just
+    // tells the Swift 6 concurrency checker that this shared instance is safe.
+    nonisolated(unsafe) private static let linkCache: NSCache<NSString, LinkifiedString> = {
+        let cache = NSCache<NSString, LinkifiedString>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
     /// The string with detected URLs marked as tappable links. SwiftUI `Text`
     /// opens them through the environment's `openURL` (default browser).
     var linkifiedAttributedString: AttributedString {
-        var attributed = AttributedString(self)
-        guard let detector = String.linkDetector else { return attributed }
-        let fullRange = NSRange(startIndex..., in: self)
-        for match in detector.matches(in: self, options: [], range: fullRange) {
-            guard let url = match.url,
-                  let range = Range(match.range, in: attributed) else { continue }
-            attributed[range].link = url
-            attributed[range].underlineStyle = .single
+        let key = self as NSString
+        if let cached = String.linkCache.object(forKey: key) {
+            return cached.value
         }
+
+        var attributed = AttributedString(self)
+        if let detector = String.linkDetector {
+            let fullRange = NSRange(startIndex..., in: self)
+            for match in detector.matches(in: self, options: [], range: fullRange) {
+                guard let url = match.url,
+                      let range = Range(match.range, in: attributed) else { continue }
+                attributed[range].link = url
+                attributed[range].underlineStyle = .single
+            }
+        }
+
+        String.linkCache.setObject(LinkifiedString(attributed), forKey: key)
         return attributed
     }
 }
@@ -149,7 +173,9 @@ struct InlineAttachmentView: View {
         .task(id: attachment.id) {
             image = nil
             loadFailed = false
-            let loaded = await MediaThumbnail.load(attachment, maxDimension: 1100)
+            // The bubble displays at previewWidth (≤300pt); a 2x-retina decode
+            // is plenty. Decoding at 1100px held ~4x the pixels actually shown.
+            let loaded = await MediaThumbnail.load(attachment, maxDimension: 600)
             guard !Task.isCancelled else { return }
             if let loaded {
                 image = loaded

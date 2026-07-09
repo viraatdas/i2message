@@ -86,6 +86,24 @@ actor LocalSearchIndex {
         try setMetadataValue("complete", forKey: "\(namespace).state")
     }
 
+    /// doc_id → content hash for every indexed document. Lets a rebuild skip
+    /// rows whose content is unchanged, which avoids needlessly replacing them
+    /// (a replace cascade-deletes the row's semantic embedding).
+    func existingDocumentHashes() throws -> [String: String] {
+        let pool = try pool()
+        return try pool.read { db in
+            var result: [String: String] = [:]
+            let rows = try Row.fetchAll(db, sql: "SELECT doc_id, hash FROM search_documents")
+            result.reserveCapacity(rows.count)
+            for row in rows {
+                let docID: String = row["doc_id"]
+                let hash: String = row["hash"]
+                result[docID] = hash
+            }
+            return result
+        }
+    }
+
     func upsertDocuments(_ documents: [SearchIndexDocument]) throws {
         guard !documents.isEmpty else {
             return

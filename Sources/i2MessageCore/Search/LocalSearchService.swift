@@ -219,13 +219,22 @@ public final class LocalSearchService: SearchProviding, SearchIndexing, @uncheck
             return
         }
 
+        // Rewrite only documents that are new or whose content changed. Replacing
+        // an unchanged row would cascade-delete its semantic embedding (see the
+        // semantic_embeddings ON DELETE CASCADE) and force a full re-embed of the
+        // corpus on every new message — the dominant source of background churn.
+        let existingHashes = try await index.existingDocumentHashes()
+
         var offset = min(try await index.resumeOffset(namespace: "exact", signature: signature), total)
         progress(Double(offset) / Double(total))
 
         while offset < total {
             try Task.checkCancellation()
             let end = min(offset + indexingBatchSize, total)
-            try await index.upsertDocuments(Array(documents[offset..<end]))
+            let changed = documents[offset..<end].filter { existingHashes[$0.id] != $0.hash }
+            if !changed.isEmpty {
+                try await index.upsertDocuments(changed)
+            }
             offset = end
             try await index.updateResumeOffset(offset, namespace: "exact")
             progress(Double(offset) / Double(total))

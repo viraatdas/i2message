@@ -84,9 +84,12 @@ final class AppViewModel: ObservableObject {
     private var searchPageCursor: PageCursor?
     private var observationTask: Task<Void, Never>?
     private var indexingTask: Task<Void, Never>?
+    private var backgroundIndexingDebounceTask: Task<Void, Never>?
     private var indexingTaskGeneration = 0
     private var transcriptReloadTask: Task<Void, Never>?
     private var transcriptReloadSequence = 0
+    private var selectionLoadTask: Task<Void, Never>?
+    private var transcriptPageAccessOrder: [ConversationID] = []
     private var refreshingTranscriptTailConversationIDs: Set<ConversationID> = []
     private var transcriptScrollSequence = 0
     private var hasLoaded = false
@@ -94,6 +97,7 @@ final class AppViewModel: ObservableObject {
     private static let maxAttachmentDescriptionCacheSize = 160
     private static let maxContactThumbnailCacheSize = 200
     private static let maxDateMentionCacheSize = 500
+    private static let maxTranscriptPageCacheSize = 12
 
     init(dependencies: AppDependencies = .mock()) {
         self.dependencies = dependencies
@@ -110,6 +114,8 @@ final class AppViewModel: ObservableObject {
     deinit {
         observationTask?.cancel()
         indexingTask?.cancel()
+        backgroundIndexingDebounceTask?.cancel()
+        selectionLoadTask?.cancel()
         transcriptReloadTask?.cancel()
         bannerDismissTask?.cancel()
         attachmentDescriptionTasks.values.forEach { $0.cancel() }
@@ -338,15 +344,45 @@ final class AppViewModel: ObservableObject {
         if isChangingConversation {
             closeThread()
         }
+        // A previous conversation's transcript load may still be in flight; it
+        // must not land after the user has already moved on, or it clobbers the
+        // now-selected chat's state and stalls the switch.
+        selectionLoadTask?.cancel()
         selectedConversationID = id
         markConversationRead(id)
+        touchTranscriptPage(id)
         self.highlightedMessageID = highlightedMessageID
-        if let highlightedMessageID {
-            await loadMessages(in: id, reset: true, around: highlightedMessageID)
-        } else if transcriptPages[id]?.messages.isEmpty ?? true {
-            await loadSelectedConversation(reset: true)
-        } else if isChangingConversation, let messages = transcriptPages[id]?.messages {
-            requestTranscriptTailScroll(conversationID: id, reason: .initialLoad, messages: messages)
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            if let highlightedMessageID {
+                await self.loadMessages(in: id, reset: true, around: highlightedMessageID)
+            } else if self.transcriptPages[id]?.messages.isEmpty ?? true {
+                await self.loadSelectedConversation(reset: true)
+            } else if isChangingConversation, let messages = self.transcriptPages[id]?.messages {
+                self.requestTranscriptTailScroll(conversationID: id, reason: .initialLoad, messages: messages)
+            }
+        }
+        selectionLoadTask = task
+        await task.value
+    }
+
+    /// Marks a conversation as most-recently-used and evicts the transcripts of
+    /// chats not touched in a while. Without this the per-conversation message
+    /// arrays accumulate for the whole session and memory climbs with every
+    /// distinct chat opened.
+    private func touchTranscriptPage(_ id: ConversationID) {
+        transcriptPageAccessOrder.removeAll { $0 == id }
+        transcriptPageAccessOrder.append(id)
+
+        while transcriptPageAccessOrder.count > Self.maxTranscriptPageCacheSize {
+            guard let victimIndex = transcriptPageAccessOrder.firstIndex(where: {
+                $0 != selectedConversationID && $0 != Self.pendingConversationID
+            }) else {
+                break
+            }
+            let victim = transcriptPageAccessOrder.remove(at: victimIndex)
+            transcriptPages[victim] = nil
         }
     }
 
@@ -866,7 +902,9 @@ final class AppViewModel: ObservableObject {
                 ),
                 around: anchor
             )
+            if Task.isCancelled { return }
             let orderedItems = page.items.sorted { $0.sentAt < $1.sentAt }
+            touchTranscriptPage(conversationID)
             var nextState = transcriptPages[conversationID] ?? .empty
             if reset {
                 nextState.messages = orderedItems
@@ -895,7 +933,11 @@ final class AppViewModel: ObservableObject {
                     )
                 }
             }
+        } catch is CancellationError {
+            // Superseded by a newer selection; leave the transcript untouched.
+            return
         } catch {
+            if Task.isCancelled { return }
             AppDiagnostics.failure("load_transcript", category: String(describing: type(of: error)))
             if dependencies.seed.messagesByConversation[conversationID] != nil {
                 loadFixtureTranscriptPage(for: conversationID, reset: true)
@@ -1932,7 +1974,6 @@ final class AppViewModel: ObservableObject {
     private func startObservingDataChanges() {
         observationTask?.cancel()
         let repository = dependencies.conversationRepository
-        let indexer = dependencies.searchIndexer
         observationTask = Task { [weak self] in
             do {
                 let isLive = self?.dependencies.isLiveData ?? false
@@ -1955,10 +1996,8 @@ final class AppViewModel: ObservableObject {
                     }
                     await self?.refreshSelectedTranscriptTail()
                     try Task.checkCancellation()
-                    try await indexer.invalidateIndex(for: nil)
-                    try Task.checkCancellation()
                     await MainActor.run { [weak self] in
-                        self?.startBackgroundIndexingIfNeeded()
+                        self?.scheduleBackgroundIndexing()
                     }
                 }
             } catch is CancellationError {
@@ -1968,6 +2007,20 @@ final class AppViewModel: ObservableObject {
                     self?.showBanner(tone: .warning, title: "Live updates paused", message: self?.userFacingMessage(for: error) ?? "Conversation updates are unavailable.")
                 }
             }
+        }
+    }
+
+    /// Coalesces reindex requests from the live-data observer. The Messages
+    /// database changes constantly (read receipts, delivery, typing), so
+    /// reindexing on every change token would keep the search index churning
+    /// during active use. Waiting for a quiet gap keeps indexing off the hot
+    /// path while chats are being switched.
+    private func scheduleBackgroundIndexing() {
+        backgroundIndexingDebounceTask?.cancel()
+        backgroundIndexingDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.startBackgroundIndexingIfNeeded()
         }
     }
 
