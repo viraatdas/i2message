@@ -769,3 +769,101 @@ struct IndexingStatusView: View {
         }
     }
 }
+
+/// Floating iMessage-style tapback picker shown on right-click of a message
+/// bubble, replacing the system context menu. A horizontal capsule of the six
+/// standard tapbacks plus a trailing "+" that opens the custom-emoji picker.
+struct TapbackPill: View {
+    /// The six canonical tapbacks, in the order iMessage presents them.
+    static let tapbackKinds: [MessageReactionKind] = [.loved, .liked, .disliked, .laughed, .emphasized, .questioned]
+
+    /// The current user's active tapback, so it reads as selected.
+    let selectedKind: MessageReactionKind?
+    let onTapback: (MessageReactionKind) -> Void
+    let onCustom: () -> Void
+
+    @State private var hovered: MessageReactionKind?
+    @State private var plusHovered = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(TapbackPill.tapbackKinds, id: \.self) { kind in
+                Button {
+                    onTapback(kind)
+                } label: {
+                    Text(ReactionCluster.emoji(for: kind, displayText: nil))
+                        .font(.system(size: 18))
+                        .frame(width: 32, height: 32)
+                        .background(fill(isSelected: selectedKind == kind, isHovered: hovered == kind))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
+                .help(ReactionCluster.title(for: kind))
+                .accessibilityLabel(ReactionCluster.title(for: kind))
+                .accessibilityAddTraits(selectedKind == kind ? [.isSelected] : [])
+            }
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 2)
+
+            Button(action: onCustom) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(fill(isSelected: false, isHovered: plusHovered))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { plusHovered = $0 }
+            .help("React with emoji")
+            .accessibilityLabel("React with emoji")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+    }
+
+    private func fill(isSelected: Bool, isHovered: Bool) -> some View {
+        Circle()
+            .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? Color.primary.opacity(0.08) : Color.clear))
+    }
+}
+
+/// Transparent overlay that intercepts *only* secondary (right) mouse clicks and
+/// forwards the click, leaving primary-click text selection and link taps to
+/// pass straight through to the SwiftUI content beneath it.
+struct RightClickCatcher: NSViewRepresentable {
+    let onRightClick: () -> Void
+
+    func makeNSView(context: Context) -> RightClickCatchingView {
+        let view = RightClickCatchingView()
+        view.onRightClick = onRightClick
+        return view
+    }
+
+    func updateNSView(_ nsView: RightClickCatchingView, context: Context) {
+        nsView.onRightClick = onRightClick
+    }
+}
+
+final class RightClickCatchingView: NSView {
+    var onRightClick: (() -> Void)?
+
+    override func rightMouseDown(with event: NSEvent) {
+        onRightClick?()
+    }
+
+    // Claim the point only while a right-mouse event is being routed; for every
+    // other event (left click, drag, text selection, link taps) stay invisible
+    // to hit-testing so the SwiftUI bubble below receives the event untouched.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        switch NSApp.currentEvent?.type {
+        case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+            return super.hitTest(point)
+        default:
+            return nil
+        }
+    }
+}

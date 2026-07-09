@@ -1,6 +1,8 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 import i2MessageCore
 
@@ -1060,6 +1062,116 @@ final class AppViewModel: ObservableObject {
         draftAttachments[selectedConversationID] = attachments
     }
 
+    /// Reads image content from `pasteboard`, writes each image's bytes to a
+    /// real temp file with a correct extension, and appends it as a
+    /// `DraftAttachment` on the selected conversation's draft — mirroring
+    /// `addDroppedAttachment`. Returns `true` when at least one image was
+    /// consumed so the composer can swallow the paste and skip inserting text;
+    /// returns `false` for text-only / non-image pasteboards so ⌘V falls
+    /// through to a normal text paste.
+    @discardableResult
+    func pasteImageAttachments(from pasteboard: NSPasteboard = .general) -> Bool {
+        guard let selectedConversationID else {
+            return false
+        }
+        let images = Self.pastedImages(from: pasteboard)
+        guard !images.isEmpty else {
+            return false
+        }
+
+        var attachments = draftAttachments[selectedConversationID, default: []]
+        var appended = false
+        for image in images {
+            guard let attachment = Self.writeTemporaryDraftAttachment(for: image) else {
+                continue
+            }
+            attachments.append(attachment)
+            appended = true
+        }
+        guard appended else {
+            return false
+        }
+        draftAttachments[selectedConversationID] = attachments
+        focusRequest = .composer
+        return true
+    }
+
+    /// A decoded image extracted from a pasteboard, ready to persist to disk.
+    private struct PastedImage {
+        var data: Data
+        var fileExtension: String
+        var uniformTypeIdentifier: String
+        var baseName: String
+    }
+
+    private static func pastedImages(from pasteboard: NSPasteboard) -> [PastedImage] {
+        // 1) Image files referenced by URL (e.g. copied from Finder). Filter to
+        //    URLs whose contents are actually images so we never treat an
+        //    arbitrary dragged file as an image.
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingContentsConformToTypes: [UTType.image.identifier]]
+        ) as? [URL], !urls.isEmpty {
+            let fileImages: [PastedImage] = urls.compactMap { url in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension
+                let uti = UTType(filenameExtension: ext)?.identifier ?? UTType.image.identifier
+                let base = url.deletingPathExtension().lastPathComponent
+                return PastedImage(
+                    data: data,
+                    fileExtension: ext,
+                    uniformTypeIdentifier: uti,
+                    baseName: base.isEmpty ? "Pasted Image" : base
+                )
+            }
+            if !fileImages.isEmpty {
+                return fileImages
+            }
+        }
+
+        // 2) Raw image bytes placed directly on the pasteboard (screenshots,
+        //    Preview, browsers). Preserve PNG/JPEG bytes as-is; normalize TIFF
+        //    and any other NSImage-backed content to PNG.
+        if let png = pasteboard.data(forType: .png) {
+            return [PastedImage(data: png, fileExtension: "png", uniformTypeIdentifier: UTType.png.identifier, baseName: "Pasted Image")]
+        }
+        let jpegType = NSPasteboard.PasteboardType(UTType.jpeg.identifier)
+        if let jpeg = pasteboard.data(forType: jpegType) {
+            return [PastedImage(data: jpeg, fileExtension: "jpeg", uniformTypeIdentifier: UTType.jpeg.identifier, baseName: "Pasted Image")]
+        }
+        if let tiff = pasteboard.data(forType: .tiff), let png = pngData(fromTIFF: tiff) {
+            return [PastedImage(data: png, fileExtension: "png", uniformTypeIdentifier: UTType.png.identifier, baseName: "Pasted Image")]
+        }
+        if let image = NSImage(pasteboard: pasteboard),
+           let tiff = image.tiffRepresentation,
+           let png = pngData(fromTIFF: tiff) {
+            return [PastedImage(data: png, fileExtension: "png", uniformTypeIdentifier: UTType.png.identifier, baseName: "Pasted Image")]
+        }
+        return []
+    }
+
+    private static func pngData(fromTIFF tiff: Data) -> Data? {
+        guard let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    private static func writeTemporaryDraftAttachment(for image: PastedImage) -> DraftAttachment? {
+        let token = UUID().uuidString
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("i2message-paste-\(token).\(image.fileExtension)")
+        do {
+            try image.data.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        return DraftAttachment(
+            id: AttachmentID(rawValue: "draft.paste.\(token)"),
+            fileURL: url,
+            filename: "\(image.baseName).\(image.fileExtension)",
+            uniformTypeIdentifier: image.uniformTypeIdentifier
+        )
+    }
+
     func removeDraftAttachment(_ attachment: DraftAttachment) {
         guard let selectedConversationID else {
             return
@@ -1103,6 +1215,12 @@ final class AppViewModel: ObservableObject {
                 self.rememberAttachmentDescription(description, for: attachment.id)
             }
         }
+    }
+
+    /// The current user's active tapback on `message`, if any. Drives the
+    /// selected state of the floating tapback pill.
+    func currentUserReaction(on message: Message) -> MessageReaction? {
+        message.reactions.first { $0.senderID == dependencies.seed.currentUser.id }
     }
 
     func toggleReaction(_ kind: MessageReactionKind, on message: Message) {
