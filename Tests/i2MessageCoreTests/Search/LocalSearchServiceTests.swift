@@ -141,7 +141,16 @@ final class LocalSearchServiceTests: XCTestCase {
         let task = Task {
             try await service.rebuildSemanticIndex { _ in }
         }
-        try await Task.sleep(nanoseconds: 60_000_000)
+        // Cancel once the first batch of embeddings has actually landed, rather
+        // than after a fixed wall-clock delay. A fixed sleep is flaky on loaded
+        // CI runners — it can fire before any batch persists or after the whole
+        // (deliberately slow) corpus finishes. Polling the persisted count makes
+        // "cancelled mid-flight" deterministic regardless of runner speed.
+        var polls = 0
+        while try await service.localIndexState().semanticEmbeddingCount == 0, polls < 400 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+            polls += 1
+        }
         task.cancel()
 
         do {

@@ -242,3 +242,8 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode continues to warn CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS generation, build, tests, and mock launch all passed.
 - **By:** n14 · 2026-07-08T04:27:10.474Z
 
+## Plan approved
+- **What:** Approved a 2-task plan for: - Paste images into the composer (your latest) — I've scoped it: the DraftAttachmentChip UI already exists, so it needs a pasteboard reader that writes pasted image data to a temp file as a DraftAttachment, plus intercepting ⌘V in the composer. That paste- interception is the fragile part and needs careful testing. - Native iMessage-style tapback picker on right-click — a custom floating pill to replace the gray context-menu list; needs custom right-click handling that won't break the text selection and clickable links I added earlier.. Tasks: Paste images into composer; Native tapback pill on right-click.
+- **Why:** user-approved plan; workers implement these nodes in isolated workspaces, honoring the dependency edges
+- **By:** conductor · 1783566512135
+
