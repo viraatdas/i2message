@@ -1217,6 +1217,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// The current user's active tapback on `message`, if any. Drives the
+    /// selected state of the floating tapback pill.
+    func currentUserReaction(on message: Message) -> MessageReaction? {
+        message.reactions.first { $0.senderID == dependencies.seed.currentUser.id }
+    }
+
     func toggleReaction(_ kind: MessageReactionKind, on message: Message) {
         var state = transcriptPages[message.conversationID] ?? .empty
         guard let index = state.messages.firstIndex(where: { $0.id == message.id }) else {

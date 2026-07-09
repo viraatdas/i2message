@@ -265,4 +265,10 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Follow-ups:**
   - Manual real-app QA of the tapback pill — Automated tests cover the model helper only; a human should confirm in the running app that right-click shows the pill, tapping a tapback updates the ReactionCluster, + opens the emoji picker, and drag-selecting bubble text / clicking a link still work.
 - **By:** n1 · 2026-07-09T06:36:51.585Z
+## n1: Resolved the 3-sided DECISIONS.md jj merge conflict for the
+- **Did:** Resolved the 3-sided DECISIONS.md jj merge conflict for the tapback-pill task (n1). Kept the consolidated lqtnynsq side: Plan-approved 2-task entry, the n0 paste-image decision, the n0 conflict-resolution note, and the full n1 tapback-pill decision (TapbackPill/RightClickCatcher + AppViewModel.currentUserReaction). The two %-diff sides were older/duplicate variants of the same paste+tapback work, so no unique content was lost. jj resolve --list reports no conflicts; the n1 code (TapbackPill, RightClickCatcher, currentUserReaction) merged cleanly into Components.swift/ConversationDetailView.swift/AppViewModel.swift. ./scripts/test.sh: TEST SUCCEEDED.
+- **Interfaces:** DECISIONS.md only — no code interfaces changed by this conflict resolution. n1 tapback interfaces (TapbackPill, RightClickCatcher, AppViewModel.currentUserReaction(on:)) were already present from the merge.
+- **Follow-ups:**
+  - Manual real-app QA of the tapback pill [out of lane] — Automated tests cover only the currentUserReaction model helper; a human should confirm right-click shows the pill, tapping a tapback updates the ReactionCluster, + opens the emoji picker, and drag-selecting bubble text / clicking links still work.
+- **By:** n1 · 2026-07-09T06:40:20.642Z
 
