@@ -51,7 +51,9 @@ extension String {
 /// Loads a downsized bitmap for an image or video attachment off the main
 /// thread. Returns nil for non-media or unreadable files.
 enum MediaThumbnail {
-    static func load(_ attachment: MessageAttachment, maxDimension: CGFloat) async -> NSImage? {
+    // The result is a freshly decoded bitmap handed back to a @MainActor caller;
+    // `sending` marks it as safe to transfer out of this nonisolated context.
+    static func load(_ attachment: MessageAttachment, maxDimension: CGFloat) async -> sending NSImage? {
         guard attachment.transferState == .local else { return nil }
         let source = attachment.thumbnailURL ?? attachment.fileURL
         guard let source else { return nil }
