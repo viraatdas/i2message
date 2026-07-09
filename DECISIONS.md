@@ -242,3 +242,8 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Update local CoreSimulator install [out of lane] — Xcode continues to warn CoreSimulator 1051.54.0 is older than build 1051.55.0, though macOS generation, build, tests, and mock launch all passed.
 - **By:** n14 · 2026-07-08T04:27:10.474Z
 
+## n0: Added paste-image support to the message composer
+- **Did:** Reading `NSPasteboard` image content (PNG/JPEG/TIFF/`NSImage`, or a file URL pointing at an image) now writes each image's bytes to a real temp file under `FileManager.temporaryDirectory` and appends a `DraftAttachment` chip on the selected conversation's draft, mirroring `addDroppedAttachment`. ⌘V in the composer is intercepted at the `NSTextView.paste(_:)` action (the only route that reliably pre-empts the built-in paste): image pasteboards divert to attachments and insert no text; text-only pasteboards fall through to a normal paste. Verified with `./scripts/build.sh`, `./scripts/test.sh` (new unit tests included), and an app launch smoke check.
+- **Interfaces:** `AppViewModel.pasteImageAttachments(from: NSPasteboard = .general) -> Bool` (returns whether an image was consumed) in `Sources/i2MessageApp/Features/App/AppViewModel.swift`. **The composer text field is now backed by `ComposerTextEditor` (an `NSViewRepresentable` wrapping `PasteInterceptingTextView`) instead of `TextEditor`** — both are private to `Sources/i2MessageApp/Views/ConversationDetailView.swift`. Edits stayed inside `ComposerView`; `MessageBubble` and its context menu were left untouched for the sibling tapback-picker task. Tests in `Tests/i2MessageAppTests/UIModel/AppViewModelTests.swift`; docs in `docs/ui.md`.
+- **By:** n0 · 2026-07-08T20:16:00Z
+

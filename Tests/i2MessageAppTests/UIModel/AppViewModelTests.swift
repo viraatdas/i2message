@@ -1,3 +1,5 @@
+import AppKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import i2Message
 import i2MessageCore
@@ -499,6 +501,64 @@ final class AppViewModelTests: XCTestCase {
 
         let description = try XCTUnwrap(model.attachmentDescriptions[imageAttachment.id])
         XCTAssertFalse(description.isEmpty)
+    }
+
+    func testPasteImageWritesTempFileAndAddsDraftAttachment() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+        _ = try XCTUnwrap(model.selectedConversationID)
+
+        let pngData = try Self.makeSamplePNGData()
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("i2message.tests.paste.image"))
+        pasteboard.clearContents()
+        pasteboard.setData(pngData, forType: .png)
+
+        let before = model.currentDraftAttachments.count
+        let consumed = model.pasteImageAttachments(from: pasteboard)
+
+        XCTAssertTrue(consumed, "An image pasteboard should be consumed as an attachment")
+        XCTAssertEqual(model.currentDraftAttachments.count, before + 1)
+
+        let attachment = try XCTUnwrap(model.currentDraftAttachments.last)
+        // The DraftAttachment must point at a real on-disk temp file with the
+        // correct extension and identical bytes to what was on the pasteboard.
+        XCTAssertTrue(attachment.fileURL.isFileURL)
+        XCTAssertEqual(attachment.fileURL.pathExtension, "png")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: attachment.fileURL.path))
+        XCTAssertEqual(try Data(contentsOf: attachment.fileURL), pngData)
+        XCTAssertEqual(attachment.uniformTypeIdentifier, UTType.png.identifier)
+
+        try? FileManager.default.removeItem(at: attachment.fileURL)
+    }
+
+    func testPasteTextOnlyPasteboardIsNotConsumed() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+        _ = try XCTUnwrap(model.selectedConversationID)
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("i2message.tests.paste.text"))
+        pasteboard.clearContents()
+        pasteboard.setString("just some text", forType: .string)
+
+        let before = model.currentDraftAttachments.count
+        XCTAssertFalse(model.pasteImageAttachments(from: pasteboard))
+        XCTAssertEqual(model.currentDraftAttachments.count, before)
+    }
+
+    private static func makeSamplePNGData() throws -> Data {
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 2,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        return try XCTUnwrap(rep?.representation(using: .png, properties: [:]))
     }
 
     func testAttachmentDescriptionTaskCancelsWhenModelDeinitializes() async throws {

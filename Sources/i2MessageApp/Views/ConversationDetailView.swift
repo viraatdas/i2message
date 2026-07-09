@@ -855,9 +855,110 @@ private struct QuotedReplyView: View {
     }
 }
 
+/// An `NSTextView` that gives the composer a chance to divert an image paste
+/// into a draft attachment before the text view performs its default paste.
+private final class PasteInterceptingTextView: NSTextView {
+    /// Returns `true` if the paste was consumed as an attachment, in which case
+    /// the text view must not insert any text.
+    var onPasteImages: (() -> Bool)?
+
+    override func paste(_ sender: Any?) {
+        if onPasteImages?() == true {
+            return
+        }
+        super.paste(sender)
+    }
+}
+
+/// A multiline text editor backed by `NSTextView` so ⌘V can be intercepted at
+/// the `paste(_:)` action — the only route that reliably pre-empts the built-in
+/// paste regardless of whether ⌘V arrives as a key event or an Edit-menu key
+/// equivalent. Mirrors the visual behavior of the previous `TextEditor`.
+private struct ComposerTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    /// Consume an image paste; returns `true` when an attachment was added.
+    var onPasteImages: () -> Bool
+    /// Handle a plain Return; returns `true` to swallow the newline.
+    var onReturn: () -> Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let textView = PasteInterceptingTextView()
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.font = .preferredFont(forTextStyle: .body)
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = NSSize(width: 1, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        textView.autoresizingMask = [.width]
+        textView.string = text
+        textView.onPasteImages = { [weak coordinator = context.coordinator] in
+            coordinator?.parent.onPasteImages() ?? false
+        }
+
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = context.coordinator.textView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        if isFocused, textView.window != nil, textView.window?.firstResponder !== textView {
+            textView.window?.makeFirstResponder(textView)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: ComposerTextEditor
+        weak var textView: NSTextView?
+
+        init(_ parent: ComposerTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                let modifiers = NSApp.currentEvent?.modifierFlags ?? []
+                let hasModifier = !modifiers.intersection([.shift, .option, .control]).isEmpty
+                if !hasModifier {
+                    return parent.onReturn()
+                }
+            }
+            return false
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            if !parent.isFocused { parent.isFocused = true }
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            if parent.isFocused { parent.isFocused = false }
+        }
+    }
+}
+
 private struct ComposerView: View {
     @EnvironmentObject private var model: AppViewModel
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = false
     @State private var isDropTargeted = false
     @State private var measuredTextHeight: CGFloat = 36
 
@@ -925,27 +1026,26 @@ private struct ComposerView: View {
                             .accessibilityHidden(true)
                     }
 
-                    TextEditor(
+                    ComposerTextEditor(
                         text: Binding(
                             get: { model.currentDraftText },
                             set: { newValue in
                                 model.updateDraftText(newValue)
                             }
-                        )
+                        ),
+                        isFocused: $composerFocused,
+                        onPasteImages: {
+                            // Only images divert to attachments; a text-only
+                            // pasteboard returns false and pastes normally.
+                            model.pasteImageAttachments()
+                        },
+                        onReturn: {
+                            if model.canSendCurrentDraft {
+                                Task { await model.sendCurrentDraft() }
+                            }
+                            return true
+                        }
                     )
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(.vertical, 8)
-                    .focused($composerFocused)
-                    .onKeyPress(.return, phases: .down) { press in
-                        guard press.modifiers.isEmpty else {
-                            return .ignored
-                        }
-                        if model.canSendCurrentDraft {
-                            Task { await model.sendCurrentDraft() }
-                        }
-                        return .handled
-                    }
                     .accessibilityLabel("Message composer")
                 }
                 .frame(height: composerHeight)
