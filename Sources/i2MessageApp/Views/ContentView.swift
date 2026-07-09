@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import i2MessageCore
 
@@ -114,6 +115,12 @@ struct ContentView: View {
             }
             await model.load()
             contentFocused = true
+        }
+        // Re-check permissions whenever the app regains focus so a grant made
+        // in System Settings (Full Disk Access, Contacts) is reflected on
+        // return — in the onboarding setup page, the sidebar, and the banner.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.refreshPermissions() }
         }
         .preferredColorScheme(model.settings.theme.colorScheme)
         .frame(minWidth: I2Layout.minWindowWidth, minHeight: I2Layout.minWindowHeight)

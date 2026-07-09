@@ -7,10 +7,11 @@ import i2MessageCore
 struct OnboardingView: View {
     var finish: () -> Void
 
+    @EnvironmentObject private var model: AppViewModel
     @State private var pageIndex = 0
     @FocusState private var isFocused: Bool
 
-    private let pages = OnboardingPage.allPages
+    private let steps = OnboardingStep.allSteps
 
     var body: some View {
         ZStack {
@@ -43,7 +44,7 @@ struct OnboardingView: View {
         .onKeyPress(.leftArrow) { retreat(); return .handled }
         .onKeyPress(.escape) { finish(); return .handled }
         .onKeyPress(.return) {
-            if pageIndex == pages.count - 1 { finish() } else { advance() }
+            if pageIndex == steps.count - 1 { finish() } else { advance() }
             return .handled
         }
         .accessibilityAddTraits(.isModal)
@@ -65,9 +66,18 @@ struct OnboardingView: View {
         .ignoresSafeArea()
     }
 
+    @ViewBuilder
     private var pageContent: some View {
-        let page = pages[pageIndex]
-        return VStack(spacing: 22) {
+        switch steps[pageIndex] {
+        case .permissions:
+            PermissionsSetupPage()
+        case .feature(let page):
+            featurePage(page)
+        }
+    }
+
+    private func featurePage(_ page: OnboardingPage) -> some View {
+        VStack(spacing: 22) {
             VStack(spacing: 8) {
                 Image(systemName: page.systemImage)
                     .font(.system(size: 34, weight: .medium))
@@ -118,7 +128,7 @@ struct OnboardingView: View {
             Spacer()
 
             HStack(spacing: 7) {
-                ForEach(pages.indices, id: \.self) { index in
+                ForEach(steps.indices, id: \.self) { index in
                     Circle()
                         .fill(index == pageIndex ? Color.accentColor : I2Palette.separator)
                         .frame(width: 7, height: 7)
@@ -132,8 +142,8 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Button(pageIndex == pages.count - 1 ? "Start Messaging" : "Next") {
-                if pageIndex == pages.count - 1 { finish() } else { advance() }
+            Button(pageIndex == steps.count - 1 ? "Start Messaging" : "Next") {
+                if pageIndex == steps.count - 1 { finish() } else { advance() }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
@@ -142,13 +152,124 @@ struct OnboardingView: View {
     }
 
     private func advance() {
-        guard pageIndex < pages.count - 1 else { return }
+        guard pageIndex < steps.count - 1 else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { pageIndex += 1 }
     }
 
     private func retreat() {
         guard pageIndex > 0 else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { pageIndex -= 1 }
+    }
+}
+
+// MARK: - Steps
+
+/// One screen in the first-run flow: either a feature-tour page or the
+/// live permission-setup page that connects the app to the Messages database.
+private enum OnboardingStep {
+    case feature(OnboardingPage)
+    case permissions
+
+    /// Welcome first, then the access setup (so real data is one tap away),
+    /// then the rest of the shortcut tour.
+    @MainActor
+    static let allSteps: [OnboardingStep] = {
+        let features = OnboardingPage.allPages
+        guard let welcome = features.first else { return [] }
+        return [.feature(welcome), .permissions] + features.dropFirst().map(OnboardingStep.feature)
+    }()
+}
+
+// MARK: - Permission setup page
+
+/// Live Full Disk Access / Contacts setup shown during onboarding. Reads the
+/// shared permission snapshot and re-checks it whenever the app regains focus,
+/// so a grant made in System Settings flips the row to "Granted" on return.
+private struct PermissionsSetupPage: View {
+    @EnvironmentObject private var model: AppViewModel
+
+    private func state(_ permission: AppPermission) -> PermissionState {
+        model.permissionSnapshot.status(for: permission)?.state ?? .notDetermined
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 8) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 34, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(18)
+                    .background(Color.accentColor.opacity(0.10), in: Circle())
+
+                Text("Connect Your Messages")
+                    .font(.system(size: 27, weight: .bold, design: .rounded))
+
+                Text("i2Message reads your conversations straight from this Mac — nothing ever leaves your computer.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: 10) {
+                permissionRow(
+                    title: "Full Disk Access",
+                    detail: "Required — lets i2Message read your Messages history.",
+                    permission: .fullDiskAccess
+                )
+                permissionRow(
+                    title: "Contacts",
+                    detail: "Optional — shows names and photos instead of raw numbers.",
+                    permission: .contacts
+                )
+            }
+            .padding(.horizontal, 10)
+
+            Label(
+                "macOS asks you to quit and reopen i2Message after you turn on Full Disk Access — that's expected.",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+        }
+        .task { await model.refreshPermissions() }
+    }
+
+    @ViewBuilder
+    private func permissionRow(title: String, detail: String, permission: AppPermission) -> some View {
+        let current = state(permission)
+        HStack(spacing: 12) {
+            PermissionStateIcon(state: current)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            if current == .granted {
+                Text("Granted")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.green)
+            } else {
+                Button(current == .notDetermined ? "Grant" : "Open Settings") {
+                    Task { await model.requestPermission(permission) }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(I2Palette.elevatedBackground.opacity(0.72), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(I2Palette.separator, lineWidth: 1)
+        }
     }
 }
 
