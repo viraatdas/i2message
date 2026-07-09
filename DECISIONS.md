@@ -272,3 +272,8 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
   - Manual real-app QA of the tapback pill [out of lane] — Automated tests cover only the currentUserReaction model helper; a human should confirm right-click shows the pill, tapping a tapback updates the ReactionCluster, + opens the emoji picker, and drag-selecting bubble text / clicking links still work.
 - **By:** n1 · 2026-07-09T06:40:20.642Z
 
+## followup-2: Restored the three context-menu items (Open Thread, Copy Text,
+- **Did:** Restored the three context-menu items (Open Thread, Copy Text, Add to Calendar) that n1 dropped when it replaced the .contextMenu with the floating tapback pill. Added a TapbackPillAction model and an actions menu section to TapbackPill in Components.swift, and a tapbackPillActions computed property on MessageBubble that rebuilds each item with its original visibility/enablement conditions (Open Thread when thread-root/reply; Copy Text disabled when body empty; Add to Calendar when canAddToCalendar and a date mention exists). Each action dismisses the pill before performing. Verified: generate-xcodeproj + build.sh (BUILD SUCCEEDED) + test.sh (all passed).
+- **Interfaces:** Sources/i2MessageApp/Views/Components.swift: new struct TapbackPillAction{title,systemImage,isEnabled,perform}; TapbackPill gained `actions: [TapbackPillAction] = []` param rendering a menu list below the tapback capsule. Sources/i2MessageApp/Views/ConversationDetailView.swift: MessageBubble.tapbackPillActions computed property; TapbackPill(...) call now passes actions: tapbackPillActions.
+- **By:** followup-2 · 2026-07-09T21:33:47.551Z
+
