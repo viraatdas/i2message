@@ -247,3 +247,11 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Why:** user-approved plan; workers implement these nodes in isolated workspaces, honoring the dependency edges
 - **By:** conductor · 1783566512135
 
+## n0: Added paste-image support to the message composer. AppViewModel.pasteImageAttac…
+- **Did:** Added paste-image support to the message composer. AppViewModel.pasteImageAttachments(from:) reads NSPasteboard image content (PNG/JPEG/TIFF/NSImage or a file URL pointing at an image), writes each image bytes to a real temp file under FileManager.temporaryDirectory, and appends a DraftAttachment chip on the selected conversation, returning whether an image was consumed. Replaced the composer TextEditor with an NSViewRepresentable (ComposerTextEditor wrapping PasteInterceptingTextView) so CMD-V is intercepted at NSTextView.paste(_:) — the only route that reliably pre-empts the built-in paste; image pasteboards divert to attachments with no text inserted, text-only pasteboards paste normally. Return-to-send behavior preserved. Added unit tests proving the pasteboard->temp-file->DraftAttachment path and that text-only pasteboards are not consumed. build.sh + test.sh pass; app launches cleanly.
+- **Interfaces:** AppViewModel.pasteImageAttachments(from: NSPasteboard = .general) -> Bool (Sources/i2MessageApp/Features/App/AppViewModel.swift). Private ComposerTextEditor + PasteInterceptingTextView replace TextEditor in Sources/i2MessageApp/Views/ConversationDetailView.swift ComposerView. Tests in Tests/i2MessageAppTests/UIModel/AppViewModelTests.swift (testPasteImageWritesTempFileAndAddsDraftAttachment, testPasteTextOnlyPasteboardIsNotConsumed). Edits confined to ComposerView and model attachment methods; MessageBubble/context menu untouched.
+- **Follow-ups:**
+  - Manual real-app QA of image paste vs text paste [out of lane] — Automated tests cover the model + reliable paste(_:) interception, but a human should confirm in the running signed app that CMD-V of a screenshot adds a chip while CMD-V of plain text still inserts text.
+  - Composer text field visual parity check [out of lane] — The composer text field moved from SwiftUI TextEditor to an NSTextView-backed representable; verify insets/growth/placeholder/focus match the prior look across window sizes.
+- **By:** n0 · 2026-07-09T03:16:54.654Z
+
