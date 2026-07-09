@@ -72,6 +72,38 @@ final class MessagesAppleScriptCommandBuilderTests: XCTestCase {
         }
     }
 
+    func testSMSSendUsesSMSServiceWhenPolicyAllowsIt() throws {
+        let draft = MessageDraft(
+            target: .handles([Self.handle(service: .sms)]),
+            text: "Green bubble",
+            requestedService: .sms
+        )
+
+        let command = try MessagesAppleScriptCommandBuilder.sendCommand(
+            for: draft,
+            policy: MessagingActionPolicy(allowsDirectSMSAutomation: true)
+        )
+
+        // Must address the SMS service, not iMessage — otherwise the send fails
+        // with error 22 for recipients who are not registered on iMessage.
+        XCTAssertTrue(command.source.contains("service type = SMS"))
+        XCTAssertFalse(command.source.contains("service type = iMessage"))
+        XCTAssertTrue(command.source.contains("send \"Green bubble\" to targetBuddy"))
+    }
+
+    func testIMessageSendStillUsesIMessageService() throws {
+        let draft = MessageDraft(
+            target: .handles([Self.handle(service: .iMessage)]),
+            text: "Blue bubble",
+            requestedService: .iMessage
+        )
+
+        let command = try MessagesAppleScriptCommandBuilder.sendCommand(for: draft)
+
+        XCTAssertTrue(command.source.contains("service type = iMessage"))
+        XCTAssertFalse(command.source.contains("service type = SMS"))
+    }
+
     func testExistingConversationIDIsNotTreatedAsAutomationAddress() {
         let draft = MessageDraft(
             target: .existingConversation("conversation.private-id"),

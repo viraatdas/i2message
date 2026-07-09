@@ -1143,15 +1143,19 @@ final class AppViewModel: ObservableObject {
             : conversations.first(where: { $0.id == conversationID })
         guard let conversation else { return nil }
 
-        // Prefer the chat GUID: `chat id "<guid>"` addresses the exact existing
-        // thread without re-resolving handles or risking a new conversation on
-        // a different service.
-        if let guid = conversation.chatGUID?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let others = conversation.participants.filter { !$0.isCurrentUser }
+
+        // Prefer the chat GUID for iMessage threads: `chat id "<guid>"` addresses
+        // the exact existing thread. Skip it for SMS/text threads — their chat
+        // GUID carries an `any;-;` service prefix that Messages resolves to
+        // iMessage, so the send fails (error 22) for recipients who are not on
+        // iMessage. Those go through a service-qualified buddy send below, which
+        // the command builder addresses on the SMS service.
+        if conversation.service == .iMessage,
+           let guid = conversation.chatGUID?.trimmingCharacters(in: .whitespacesAndNewlines),
            !guid.isEmpty {
             return .existingChat(guid: guid)
         }
-        // Fallback for conversations without a GUID: 1:1 buddy send.
-        let others = conversation.participants.filter { !$0.isCurrentUser }
         if others.count == 1,
            let handle = others.first?.handles.first(where: {
                !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

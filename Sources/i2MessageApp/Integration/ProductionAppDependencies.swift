@@ -23,7 +23,12 @@ extension AppDependencies {
         let messagingActions = SafeMessagingActionService(
             automation: automation,
             handoff: handoff,
-            permissionManager: permissionManager
+            permissionManager: permissionManager,
+            // Allow SMS/text threads to send on the SMS service (via Text Message
+            // Forwarding). Without this, green-bubble conversations either fail as
+            // iMessage or bail to a manual handoff. If no SMS service is available
+            // the AppleScript throws and the send still falls back to handoff.
+            policy: MessagingActionPolicy(allowsDirectSMSAutomation: true)
         )
         let corpusProvider = RepositorySearchIndexCorpusProvider(
             conversations: dataStack.conversations,

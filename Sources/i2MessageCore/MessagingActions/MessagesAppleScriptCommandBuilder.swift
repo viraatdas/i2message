@@ -59,9 +59,20 @@ public enum MessagesAppleScriptCommandBuilder {
             )
         }
 
+        // Send on the conversation's real service. Hardcoding iMessage here made
+        // green-bubble (SMS) threads go out as iMessage, which fails with error
+        // 22 when the recipient is not registered on iMessage.
+        let serviceTypeKeyword: String
+        switch service {
+        case .sms, .mms, .rcs:
+            serviceTypeKeyword = "SMS"
+        case .iMessage, .unknown:
+            serviceTypeKeyword = "iMessage"
+        }
+
         var lines = [
             "tell application \"Messages\"",
-            "    set targetService to first service whose service type = iMessage",
+            "    set targetService to first service whose service type = \(serviceTypeKeyword)",
             "    set targetBuddy to buddy \(appleScriptString(recipient)) of targetService"
         ]
 
