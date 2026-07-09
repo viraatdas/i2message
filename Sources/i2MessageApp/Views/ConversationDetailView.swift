@@ -894,11 +894,8 @@ private struct ComposerView: View {
 
                 EmojiPickerControl(
                     accessibilityLabel: "Insert emoji in message composer",
-                    helpText: "Insert emoji",
-                    popoverTitle: "Message emoji",
-                    customPlaceholder: "Paste emoji"
-                ) { emoji in
-                    model.insertEmojiInCurrentDraft(emoji)
+                    helpText: "Insert emoji"
+                ) {
                     composerFocused = true
                 }
 

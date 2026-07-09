@@ -17,18 +17,21 @@ enum EmojiCatalog {
     }
 }
 
+/// The composer emoji button. Clicking it focuses the composer and opens
+/// macOS's own Emoji & Symbols picker (the same one as ⌃⌘Space), which inserts
+/// straight into the focused field — no intermediate popover to click through.
 struct EmojiPickerControl: View {
     let accessibilityLabel: String
     let helpText: String
-    let popoverTitle: String
-    let customPlaceholder: String
-    var insert: (String) -> Void
-
-    @State private var isPresented = false
+    /// Focuses the composer this control feeds. The native picker inserts into
+    /// the first responder, so the composer must be focused first for the emoji
+    /// to land in the draft.
+    var focusComposer: () -> Void
 
     var body: some View {
         Button {
-            isPresented.toggle()
+            focusComposer()
+            NSApplication.shared.orderFrontCharacterPalette(nil)
         } label: {
             Label("Emoji", systemImage: "face.smiling")
         }
@@ -36,16 +39,6 @@ struct EmojiPickerControl: View {
         .labelStyle(.iconOnly)
         .help(helpText)
         .accessibilityLabel(accessibilityLabel)
-        .popover(isPresented: $isPresented, arrowEdge: .top) {
-            EmojiPickerPopover(
-                title: popoverTitle,
-                customPlaceholder: customPlaceholder
-            ) { emoji in
-                insert(emoji)
-                isPresented = false
-            }
-            .frame(width: 276)
-        }
     }
 }
 
