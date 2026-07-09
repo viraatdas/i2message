@@ -384,6 +384,7 @@ private struct MessageBubble: View {
     var isGroupEnd: Bool = true
     @State private var isEditHistoryExpanded = false
     @State private var isCustomReactionPickerPresented = false
+    @State private var isTapbackPillPresented = false
 
     private var isOutgoing: Bool {
         message.direction == .outgoing
@@ -546,49 +547,29 @@ private struct MessageBubble: View {
             }
         }
         .padding(.top, message.reactions.isEmpty ? 0 : 9)
-        .contextMenu {
-            Section("Tapback") {
-                ForEach(MessageBubble.tapbackKinds, id: \.self) { kind in
-                    Button {
-                        model.toggleReaction(kind, on: message)
-                    } label: {
-                        Text("\(ReactionCluster.emoji(for: kind, displayText: nil))  \(ReactionCluster.title(for: kind))")
+        // Secondary-click-only overlay: presents the floating tapback pill on
+        // right-click while leaving primary-click text selection and link taps
+        // to pass through untouched.
+        .overlay {
+            RightClickCatcher { isTapbackPillPresented = true }
+        }
+        .popover(isPresented: $isTapbackPillPresented, arrowEdge: .top) {
+            TapbackPill(
+                selectedKind: model.currentUserReaction(on: message)?.kind,
+                onTapback: { kind in
+                    model.toggleReaction(kind, on: message)
+                    isTapbackPillPresented = false
+                },
+                onCustom: {
+                    // Dismiss the pill first, then hand off to the existing emoji
+                    // picker popover; presenting a second popover in the same
+                    // runloop tick as the first dismisses can drop it, so defer.
+                    isTapbackPillPresented = false
+                    DispatchQueue.main.async {
+                        isCustomReactionPickerPresented = true
                     }
                 }
-
-                Button {
-                    isCustomReactionPickerPresented = true
-                } label: {
-                    Label("React with Emoji", systemImage: "face.smiling")
-                }
-            }
-
-            Divider()
-
-            if model.isThreadRoot(message) || message.replyToMessageID != nil {
-                Button {
-                    model.openThread(for: message)
-                } label: {
-                    Label("Open Thread", systemImage: "bubble.left.and.text.bubble.right")
-                }
-            }
-
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(message.body.plainText, forType: .string)
-            } label: {
-                Label("Copy Text", systemImage: "doc.on.doc")
-            }
-            .disabled(message.body.plainText.isEmpty)
-
-            if model.canAddToCalendar, model.dateMention(in: message) != nil {
-                Divider()
-                Button {
-                    Task { await model.addToCalendar(from: message) }
-                } label: {
-                    Label("Add to Calendar", systemImage: "calendar.badge.plus")
-                }
-            }
+            )
         }
         .popover(isPresented: $isCustomReactionPickerPresented, arrowEdge: .top) {
             EmojiPickerPopover(
@@ -601,8 +582,6 @@ private struct MessageBubble: View {
             .frame(width: 276)
         }
     }
-
-    static let tapbackKinds: [MessageReactionKind] = [.loved, .liked, .disliked, .laughed, .emphasized, .questioned]
 
     private var bubbleSpacing: CGFloat {
         density == .compact ? 5 : 8

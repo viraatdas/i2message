@@ -419,6 +419,28 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(updated.reactions.count, baseline)
     }
 
+    func testCurrentUserReactionTracksTapbackPillSelection() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let target = try XCTUnwrap(model.selectedMessages.first)
+        XCTAssertNil(model.currentUserReaction(on: target), "No tapback selected before the user reacts")
+
+        model.toggleReaction(.loved, on: target)
+        var updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(model.currentUserReaction(on: updated)?.kind, .loved)
+
+        // Switching tapbacks moves the selection rather than accumulating.
+        model.toggleReaction(.laughed, on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertEqual(model.currentUserReaction(on: updated)?.kind, .laughed)
+
+        // Toggling the active tapback off clears the pill selection.
+        model.toggleReaction(.laughed, on: updated)
+        updated = try XCTUnwrap(model.selectedMessages.first { $0.id == target.id })
+        XCTAssertNil(model.currentUserReaction(on: updated))
+    }
+
     func testCustomReactionUsesDisplayTextInFixturesOnly() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
