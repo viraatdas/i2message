@@ -568,7 +568,8 @@ private struct MessageBubble: View {
                     DispatchQueue.main.async {
                         isCustomReactionPickerPresented = true
                     }
-                }
+                },
+                actions: tapbackPillActions
             )
         }
         .popover(isPresented: $isCustomReactionPickerPresented, arrowEdge: .top) {
@@ -581,6 +582,39 @@ private struct MessageBubble: View {
             }
             .frame(width: 276)
         }
+    }
+
+    /// Non-tapback message actions restored from the old context menu, hosted
+    /// in the floating pill: Open Thread, Copy Text, Add to Calendar. Each
+    /// dismisses the pill before performing its work.
+    private var tapbackPillActions: [TapbackPillAction] {
+        var actions: [TapbackPillAction] = []
+
+        if model.isThreadRoot(message) || message.replyToMessageID != nil {
+            actions.append(TapbackPillAction(title: "Open Thread", systemImage: "bubble.left.and.text.bubble.right") {
+                isTapbackPillPresented = false
+                model.openThread(for: message)
+            })
+        }
+
+        actions.append(TapbackPillAction(
+            title: "Copy Text",
+            systemImage: "doc.on.doc",
+            isEnabled: !message.body.plainText.isEmpty
+        ) {
+            isTapbackPillPresented = false
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(message.body.plainText, forType: .string)
+        })
+
+        if model.canAddToCalendar, model.dateMention(in: message) != nil {
+            actions.append(TapbackPillAction(title: "Add to Calendar", systemImage: "calendar.badge.plus") {
+                isTapbackPillPresented = false
+                Task { await model.addToCalendar(from: message) }
+            })
+        }
+
+        return actions
     }
 
     private var bubbleSpacing: CGFloat {
