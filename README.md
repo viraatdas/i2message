@@ -29,7 +29,7 @@ From a fresh checkout:
 
 The scripts generate `i2Message.xcodeproj`, build into `build/DerivedData`, run unit tests, and open the macOS app. The app renders fixture data immediately and hydrates real Messages data when the required macOS permissions are available.
 
-The debug build and test scripts disable code signing so a fresh checkout can verify without a personal Apple Developer Team. Release/archive scripts keep signing enabled.
+`./scripts/build.sh` signs Debug builds with the first `Apple Development` (or `Developer ID Application`) certificate in the login keychain. A stable signing identity keeps the app's designated requirement constant across rebuilds, so the Full Disk Access grant (which macOS ties to the code signature, unlike the bundle-id-keyed Contacts/Calendar/Automation grants) survives rebuilds and reinstalls. On machines without a code-signing certificate the script falls back to the previous unsigned/ad-hoc behavior, so a fresh checkout still builds without an Apple Developer Team — but FDA must then be re-granted after every rebuild. Set `I2MESSAGE_CODE_SIGN_IDENTITY` to pick a specific identity, or set it empty (`I2MESSAGE_CODE_SIGN_IDENTITY= ./scripts/build.sh`) to force the unsigned fallback. The test script keeps signing disabled; release/archive scripts keep signing enabled.
 
 To work in Xcode:
 
