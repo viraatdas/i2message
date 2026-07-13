@@ -295,5 +295,16 @@ Shared, agent-authored log of cross-cutting decisions the fleet must honor. The 
 - **Follow-ups:**
   - Re-grant FDA once for the newly signed app [out of lane] — The signing identity changed from ad-hoc to Apple Development, so macOS will treat the next installed build as a new code identity one final time; after that one re-grant, FDA persists.
   - Xcode GUI builds still use Automatic signing with empty team [out of lane] — App/i2Message.xcconfig keeps CODE_SIGN_STYLE=Automatic and empty DEVELOPMENT_TEAM; building from the Xcode GUI may sign differently than build.sh. Setting DEVELOPMENT_TEAM in the xcconfig would align them if GUI builds matter.
+- **Note:** With a real certificate the designated requirement is `identifier "dev.viraat.i2message" and certificate leaf[subject.CN] = "Apple Development: Viraat Das (VF44U5EPN6)"` — stable across rebuilds, which is why the TCC Full Disk Access grant persists.
 - **By:** n2 · 2026-07-13T05:19:25.295Z
+
+## n2: Resolved the DECISIONS.md/Swift jj merge conflicts for the signing task
+- **Did:** Resolved the 2-sided jj merge conflicts from integrating the n2 stable-signing work. Components.swift and ConversationDetailView.swift were byte-identical in both merge parents (vntpqmlw and nmtmotpq) — the conflict came from a stale merge base, the same silent-merge quirk documented earlier — so both were restored to the shared parent content (tapback pill + TapbackPillAction menu intact). DECISIONS.md had two duplicate writeups of the same n2 signing entry; kept the fuller trunk-side entry and folded in the one unique detail (the designated-requirement string) from the other side. No code changes.
+- **By:** n2 · 2026-07-13
+## n2: Resolved the 3 jj merge conflicts from integrating the
+- **Did:** Resolved the 3 jj merge conflicts from integrating the n2 stable-signing work. Components.swift and ConversationDetailView.swift were byte-identical in both merge parents (stale merge base caused a phantom conflict), so both were restored to the shared parent content. DECISIONS.md had two duplicate writeups of the same n2 entry; kept the fuller trunk-side entry, folded in the unique designated-requirement detail from the other side, and appended a resolution note. jj resolve --list is clean; ./scripts/test.sh TEST SUCCEEDED.
+- **Interfaces:** No code interfaces changed — conflict resolution only. Tapback pill (TapbackPill, TapbackPillAction, tapbackPillActions) and build.sh signing work both preserved intact.
+- **Follow-ups:**
+  - Investigate recurring stale-base jj merges producing phantom conflicts [out of lane] — Second occurrence: files identical in both parents still materialized 2-sided conflicts (and previously silently dropped code). Merge-base selection in the Rudder jj integration path looks suspect.
+- **By:** n2 · 2026-07-13T05:22:44.529Z
 
