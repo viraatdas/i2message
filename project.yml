@@ -110,6 +110,13 @@ schemes:
         i2MessageAppTests: [test]
     test:
       gatherCoverageData: true
+      # Expanded from xcodebuild command-line build settings, so
+      # `xcodebuild test I2MESSAGE_REAL_DB_CHECK=1` reaches the test process
+      # (plain environment variables are not forwarded to unhosted xctest).
+      # Empty unless explicitly passed; the harness skips unless it equals "1".
+      environmentVariables:
+        I2MESSAGE_REAL_DB_CHECK: $(I2MESSAGE_REAL_DB_CHECK)
+        I2MESSAGE_REAL_DB_PATH: $(I2MESSAGE_REAL_DB_PATH)
       targets:
         - name: i2MessageCoreTests
           parallelizable: true

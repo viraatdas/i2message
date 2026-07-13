@@ -16,8 +16,62 @@ public struct SearchIndexCorpus: Sendable {
     }
 }
 
+/// The small, always-in-memory part of the corpus: every conversation and
+/// contact, but no message history. Message history is streamed per
+/// conversation via `messageBatches(in:batchSize:)` so a large Messages
+/// library never has to be materialized in one array.
+public struct SearchIndexCorpusSkeleton: Sendable {
+    public var conversations: [Conversation]
+    public var contacts: [Contact]
+
+    public init(conversations: [Conversation], contacts: [Contact]) {
+        self.conversations = conversations
+        self.contacts = contacts
+    }
+}
+
 public protocol SearchIndexCorpusProviding: Sendable {
     func searchIndexCorpus() async throws -> SearchIndexCorpus
+
+    /// Conversations and contacts only. Defaults to adapting `searchIndexCorpus()`.
+    func corpusSkeleton() async throws -> SearchIndexCorpusSkeleton
+
+    /// One conversation's messages in bounded batches, newest first.
+    /// Defaults to adapting `searchIndexCorpus()`.
+    func messageBatches(in conversationID: ConversationID, batchSize: Int) -> AsyncThrowingStream<[Message], Error>
+}
+
+public extension SearchIndexCorpusProviding {
+    func corpusSkeleton() async throws -> SearchIndexCorpusSkeleton {
+        let corpus = try await searchIndexCorpus()
+        return SearchIndexCorpusSkeleton(conversations: corpus.conversations, contacts: corpus.contacts)
+    }
+
+    func messageBatches(in conversationID: ConversationID, batchSize: Int) -> AsyncThrowingStream<[Message], Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let corpus = try await searchIndexCorpus()
+                    let messages = corpus.messages
+                        .filter { $0.conversationID == conversationID }
+                        .sorted { $0.sentAt > $1.sentAt }
+                    var start = 0
+                    while start < messages.count {
+                        try Task.checkCancellation()
+                        let end = min(start + max(1, batchSize), messages.count)
+                        continuation.yield(Array(messages[start..<end]))
+                        start = end
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
 }
 
 public struct StaticSearchIndexCorpusProvider: SearchIndexCorpusProviding {
@@ -184,19 +238,14 @@ struct SearchIndexDocument: Hashable, Sendable {
 
 enum SearchDocumentBuilder {
     static func documents(from corpus: SearchIndexCorpus) -> [SearchIndexDocument] {
-        let conversationsByID = Dictionary(uniqueKeysWithValues: corpus.conversations.map { ($0.id, $0) })
-        let contactsByID = Dictionary(uniqueKeysWithValues: corpus.contacts.map { ($0.id, $0) })
+        let conversationsByID = Dictionary(corpus.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let contactsByID = Dictionary(corpus.contacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        var documents: [SearchIndexDocument] = []
-        documents.reserveCapacity(corpus.conversations.count + corpus.contacts.count + corpus.messages.count)
-
-        documents.append(contentsOf: corpus.conversations.map { conversation in
-            conversationDocument(conversation)
-        })
-
-        documents.append(contentsOf: corpus.contacts.map { contact in
-            contactDocument(contact)
-        })
+        var documents = skeletonDocuments(
+            conversations: corpus.conversations,
+            contacts: corpus.contacts
+        )
+        documents.reserveCapacity(documents.count + corpus.messages.count)
 
         for message in corpus.messages where !message.isDeleted {
             documents.append(messageDocument(message, conversation: conversationsByID[message.conversationID], contactsByID: contactsByID))
@@ -209,8 +258,58 @@ enum SearchDocumentBuilder {
         return documents.sorted { $0.id < $1.id }
     }
 
-    static func corpusSignature(for documents: [SearchIndexDocument]) -> String {
-        StableHash.digest(documents.map { "\($0.id):\($0.hash)" }.joined(separator: "|"))
+    // Note: there is deliberately no whole-corpus signature anymore — hashing
+    // id:hash pairs across ~700k documents on every pass was the scaling
+    // bottleneck; change detection is per conversation via
+    // `conversationSignature(_:)` plus per-document hashes.
+
+    static func skeletonDocuments(conversations: [Conversation], contacts: [Contact]) -> [SearchIndexDocument] {
+        conversations.map(conversationDocument) + contacts.map(contactDocument)
+    }
+
+    /// Message and attachment documents for one streamed batch.
+    static func messageDocuments(
+        for messages: [Message],
+        conversation: Conversation?,
+        contactsByID: [ContactID: Contact]
+    ) -> [SearchIndexDocument] {
+        var documents: [SearchIndexDocument] = []
+        documents.reserveCapacity(messages.count)
+
+        for message in messages where !message.isDeleted {
+            documents.append(messageDocument(message, conversation: conversation, contactsByID: contactsByID))
+
+            for attachment in message.attachments {
+                documents.append(attachmentDocument(attachment, message: message, conversation: conversation))
+            }
+        }
+
+        return documents
+    }
+
+    static func documentID(for conversationID: ConversationID) -> String {
+        "conversation:\(conversationID.rawValue)"
+    }
+
+    /// Cheap change detector for one conversation's indexed content. When this
+    /// is unchanged since the last completed pass, the rebuild skips streaming
+    /// the conversation's messages entirely — that is what keeps a background
+    /// reindex of a ~700k-message library incremental instead of a full sweep.
+    /// New activity bumps `updatedAt`/`lastMessage`; edits to old messages
+    /// without any newer activity are picked up once the conversation changes
+    /// again (or via `invalidateIndex`).
+    static func conversationSignature(_ conversation: Conversation) -> String {
+        let components = [
+            conversation.id.rawValue,
+            conversation.title,
+            conversation.participants.map(\.displayName).joined(separator: ","),
+            conversation.service.rawValue,
+            String(conversation.updatedAt.timeIntervalSince1970),
+            conversation.lastMessage?.messageID?.rawValue ?? "",
+            conversation.lastMessage?.text ?? "",
+            conversation.lastMessage.map { String($0.sentAt.timeIntervalSince1970) } ?? ""
+        ]
+        return StableHash.digest(components.joined(separator: "|"))
     }
 
     private static func conversationDocument(_ conversation: Conversation) -> SearchIndexDocument {
@@ -221,7 +320,7 @@ enum SearchDocumentBuilder {
             .joined(separator: "\n")
 
         return SearchIndexDocument(
-            id: "conversation:\(conversation.id.rawValue)",
+            id: documentID(for: conversation.id),
             kind: .conversation,
             conversationID: conversation.id,
             messageID: nil,
