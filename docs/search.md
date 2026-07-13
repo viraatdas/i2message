@@ -20,11 +20,21 @@ Exact search uses SQLite FTS5 with the `unicode61` tokenizer, diacritic-insensit
 
 `ExactSearchQuery` supports conversation, sender/contact, date, and attachment filters. `LocalSearchFilters` adds a service filter for local hybrid APIs.
 
+### Full-history, streaming ingestion
+
+The exact index covers the ENTIRE Messages history — every conversation and every message — with no caps. To keep memory bounded on large libraries (~700k messages), `rebuildExactIndex` never materializes the full corpus: it loads a small skeleton (all conversations + contacts) via `SearchIndexCorpusProviding.corpusSkeleton()` and streams each conversation's messages in paged batches via `messageBatches(in:batchSize:)`.
+
+Rebuilds are incremental and resumable at conversation granularity. Each completed conversation records a content signature (`indexed_conversations` table); a later pass skips streaming any conversation whose signature is unchanged, so a background reindex after one new message re-reads only the affected conversation. Within a changed conversation, per-document hash comparison ensures unchanged rows are never rewritten (a rewrite would cascade-delete the row's semantic embedding).
+
+`scripts/real-db-index-check.sh` runs an env-gated harness (`I2MESSAGE_REAL_DB_CHECK=1`) that builds the index from a temporary copy of the real `chat.db` and asserts full coverage plus old-message findability. It requires Full Disk Access and leaves no artifacts.
+
 ## Semantic Search
 
 Semantic indexing stores normalized vectors in SQLite as local BLOBs. `rebuildSemanticIndex` only embeds documents whose hash/model pair is missing or stale, so interrupted runs can resume without recomputing completed chunks.
 
 Search computes the query embedding locally and scores stored vectors with cosine similarity. For large histories, the implementation uses a pragmatic bounded scan (`semanticCandidateLimit`, default 20,000) rather than adding an undeclared ANN dependency. This is fast enough for current fixture sizes and keeps the dependency surface aligned with the foundation manifest.
+
+Unlike the exact index, the semantic index is deliberately bounded: only the most recent `semanticCandidateLimit` documents are eligible for embedding (production passes `AppDependencies.semanticEmbeddingBudget` = 50,000), embedded newest-first. Embedding all ~700k documents of a large library locally is prohibitive; exact search still covers everything.
 
 While embeddings are still building, semantic search returns ranked results from the documents already embedded. If no embeddings exist yet, it returns an empty result quickly instead of blocking UI queries.
 

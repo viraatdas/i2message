@@ -205,45 +205,121 @@ public final class LocalSearchService: SearchProviding, SearchIndexing, @uncheck
         return try await index.state(modelIdentifier: embedder.modelIdentifier)
     }
 
+    /// Number of indexed documents of one kind (e.g. message documents only).
+    /// Used by diagnostics and the real-database verification harness.
+    func indexedDocumentCount(kind: SearchResultKind) async throws -> Int {
+        try await prepare()
+        return try await index.documentCount(kind: kind)
+    }
+
+    /// Streams the corpus one conversation at a time so the full library never
+    /// has to be materialized in memory, no matter how large the Messages
+    /// history is. Conversations whose signature is unchanged since the last
+    /// completed pass are skipped without touching their message history, which
+    /// keeps background reindexing incremental; an interrupted pass resumes by
+    /// skipping the conversations it already finished.
     public func rebuildExactIndex(progress: @Sendable @escaping (Double) -> Void) async throws {
         try Task.checkCancellation()
         try await prepare()
 
-        let corpus = try await corpusProvider.searchIndexCorpus()
-        let documents = SearchDocumentBuilder.documents(from: corpus)
-        let signature = SearchDocumentBuilder.corpusSignature(for: documents)
-        let total = documents.count
+        let skeleton = try await corpusProvider.corpusSkeleton()
+        // Deterministic order so repeated/resumed passes walk the same sequence.
+        let conversations = skeleton.conversations.sorted { $0.id.rawValue < $1.id.rawValue }
+        let contactsByID = Dictionary(skeleton.contacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Conversation and contact documents are small; upsert the changed ones
+        // up front, then drop documents whose conversation or contact vanished.
+        let skeletonDocuments = SearchDocumentBuilder.skeletonDocuments(
+            conversations: conversations,
+            contacts: skeleton.contacts
+        )
+        try await upsertChangedDocuments(skeletonDocuments)
+        try await index.pruneDocuments(
+            validConversationIDs: Set(conversations.map(\.id.rawValue)),
+            validContactDocumentIDs: Set(skeletonDocuments.filter { $0.kind == .contact }.map(\.id))
+        )
+
+        let total = conversations.count
         guard total > 0 else {
             progress(1)
             try await index.markRebuildComplete(namespace: "exact")
             return
         }
+        progress(0)
 
-        // Rewrite only documents that are new or whose content changed. Replacing
-        // an unchanged row would cascade-delete its semantic embedding (see the
-        // semantic_embeddings ON DELETE CASCADE) and force a full re-embed of the
-        // corpus on every new message — the dominant source of background churn.
-        let existingHashes = try await index.existingDocumentHashes()
+        let storedSignatures = try await index.conversationSignatures()
+        var firstError: Error?
 
-        var offset = min(try await index.resumeOffset(namespace: "exact", signature: signature), total)
-        progress(Double(offset) / Double(total))
-
-        while offset < total {
+        for (position, conversation) in conversations.enumerated() {
             try Task.checkCancellation()
-            let end = min(offset + indexingBatchSize, total)
-            let changed = documents[offset..<end].filter { existingHashes[$0.id] != $0.hash }
-            if !changed.isEmpty {
-                try await index.upsertDocuments(changed)
+            let signature = SearchDocumentBuilder.conversationSignature(conversation)
+
+            if storedSignatures[conversation.id.rawValue] != signature {
+                do {
+                    try await indexConversation(conversation, contactsByID: contactsByID)
+                    try await index.setConversationSignature(signature, conversationID: conversation.id.rawValue)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // One unreadable conversation must not brick search for the
+                    // rest of the library. Its signature stays unset so the next
+                    // pass retries it; the first failure is rethrown at the end.
+                    firstError = firstError ?? error
+                }
             }
-            offset = end
-            try await index.updateResumeOffset(offset, namespace: "exact")
-            progress(Double(offset) / Double(total))
+
+            progress(Double(position + 1) / Double(total))
             await Task.yield()
         }
 
-        try await index.deleteDocuments(excluding: Set(documents.map(\.id)))
+        if let firstError {
+            throw firstError
+        }
+
         try await index.markRebuildComplete(namespace: "exact")
         progress(1)
+    }
+
+    private func indexConversation(
+        _ conversation: Conversation,
+        contactsByID: [ContactID: Contact]
+    ) async throws {
+        var validDocumentIDs: Set<String> = [SearchDocumentBuilder.documentID(for: conversation.id)]
+
+        for try await batch in corpusProvider.messageBatches(in: conversation.id, batchSize: indexingBatchSize) {
+            try Task.checkCancellation()
+            let documents = SearchDocumentBuilder.messageDocuments(
+                for: batch,
+                conversation: conversation,
+                contactsByID: contactsByID
+            )
+            validDocumentIDs.formUnion(documents.map(\.id))
+            try await upsertChangedDocuments(documents)
+            await Task.yield()
+        }
+
+        // Sweep documents of messages that disappeared from this conversation
+        // (deletions, retractions). Scoped to the conversation so it stays cheap.
+        try await index.deleteDocuments(conversationID: conversation.id.rawValue, excluding: validDocumentIDs)
+    }
+
+    /// Rewrite only documents that are new or whose content changed. Replacing
+    /// an unchanged row would cascade-delete its semantic embedding (see the
+    /// semantic_embeddings ON DELETE CASCADE) and force a full re-embed of the
+    /// corpus on every new message — the dominant source of background churn.
+    private func upsertChangedDocuments(_ documents: [SearchIndexDocument]) async throws {
+        var start = 0
+        while start < documents.count {
+            try Task.checkCancellation()
+            let end = min(start + indexingBatchSize, documents.count)
+            let chunk = Array(documents[start..<end])
+            let existingHashes = try await index.documentHashes(for: chunk.map(\.id))
+            let changed = chunk.filter { existingHashes[$0.id] != $0.hash }
+            if !changed.isEmpty {
+                try await index.upsertDocuments(changed)
+            }
+            start = end
+        }
     }
 
     public func rebuildSemanticIndex(progress: @Sendable @escaping (Double) -> Void) async throws {

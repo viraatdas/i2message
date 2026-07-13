@@ -2,6 +2,12 @@ import Foundation
 import i2MessageCore
 
 extension AppDependencies {
+    /// How many of the most recent message documents get local semantic
+    /// embeddings. Exact (FTS) search always covers the entire history;
+    /// embedding hundreds of thousands of messages on device is prohibitive,
+    /// so semantic search is bounded to the newest slice.
+    static let semanticEmbeddingBudget = 50_000
+
     static func live(
         configuration: MessagesStoreConfiguration = MessagesStoreConfiguration(),
         fileManager: FileManager = .default
@@ -38,7 +44,7 @@ extension AppDependencies {
         let searchService = LocalSearchService(
             indexURL: defaultSearchIndexURL(fileManager: fileManager),
             corpusProvider: corpusProvider,
-            semanticCandidateLimit: 50_000
+            semanticCandidateLimit: semanticEmbeddingBudget
         )
 
         return AppDependencies(
@@ -116,26 +122,68 @@ private struct CompositeAppPermissionManager: PermissionManaging {
     }
 }
 
+/// Adapts the read-only Messages repositories into the streaming corpus
+/// boundary. Exact search must cover the ENTIRE history, so there are no
+/// conversation or per-conversation message caps here; memory stays bounded
+/// because `LocalSearchService` consumes messages one paged batch at a time
+/// instead of materializing the whole library.
 private struct RepositorySearchIndexCorpusProvider: SearchIndexCorpusProviding {
     let conversations: any ConversationRepository
     let messages: any MessageRepository
     let contacts: any ContactProviding
-    // Index only recent conversations with bounded history for now so the
-    // background indexer stays cheap on large Messages libraries.
-    var conversationPageSize = 400
-    var maxConversations = 10
-    var messagePageSize = 500
-    var maxMessagesPerConversation = 500
+    var conversationPageSize = 200
+    var contactPageSize = 200
 
-    func searchIndexCorpus() async throws -> SearchIndexCorpus {
+    func corpusSkeleton() async throws -> SearchIndexCorpusSkeleton {
         let conversationCorpus = try await loadConversations()
-        async let contactCorpus = loadContacts()
-        let messageCorpus = try await loadMessages(for: conversationCorpus)
+        let contactCorpus = (try? await loadContacts()) ?? conversationCorpus.flatMap(\.participants)
+        return SearchIndexCorpusSkeleton(conversations: conversationCorpus, contacts: contactCorpus)
+    }
+
+    func messageBatches(in conversationID: ConversationID, batchSize: Int) -> AsyncThrowingStream<[Message], Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var cursor: PageCursor?
+                    repeat {
+                        try Task.checkCancellation()
+                        let page = try await messages.messages(
+                            in: conversationID,
+                            page: PageRequest(cursor: cursor, limit: batchSize, direction: .older),
+                            around: nil
+                        )
+                        if !page.items.isEmpty {
+                            continuation.yield(page.items)
+                        }
+                        cursor = page.hasMore ? page.nextCursor : nil
+                    } while cursor != nil
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    /// Full in-memory corpus. Only kept to satisfy the protocol's primitive —
+    /// production indexing goes through `corpusSkeleton()`/`messageBatches`.
+    func searchIndexCorpus() async throws -> SearchIndexCorpus {
+        let skeleton = try await corpusSkeleton()
+        var allMessages: [Message] = []
+
+        for conversation in skeleton.conversations {
+            for try await batch in messageBatches(in: conversation.id, batchSize: conversationPageSize) {
+                allMessages.append(contentsOf: batch)
+            }
+        }
 
         return SearchIndexCorpus(
-            conversations: conversationCorpus,
-            contacts: (try? await contactCorpus) ?? conversationCorpus.flatMap(\.participants),
-            messages: messageCorpus
+            conversations: skeleton.conversations,
+            contacts: skeleton.contacts,
+            messages: allMessages
         )
     }
 
@@ -144,15 +192,16 @@ private struct RepositorySearchIndexCorpusProvider: SearchIndexCorpusProviding {
         var allConversations: [Conversation] = []
 
         repeat {
+            try Task.checkCancellation()
             let page = try await conversations.conversations(
-                page: PageRequest(cursor: cursor, limit: min(conversationPageSize, maxConversations)),
+                page: PageRequest(cursor: cursor, limit: conversationPageSize),
                 filter: ConversationFilter(includeArchived: true)
             )
             allConversations.append(contentsOf: page.items)
-            cursor = page.hasMore && allConversations.count < maxConversations ? page.nextCursor : nil
+            cursor = page.hasMore ? page.nextCursor : nil
         } while cursor != nil
 
-        return Array(allConversations.prefix(maxConversations))
+        return allConversations
     }
 
     private func loadContacts() async throws -> [Contact] {
@@ -162,37 +211,13 @@ private struct RepositorySearchIndexCorpusProvider: SearchIndexCorpusProviding {
         repeat {
             let page = try await contacts.contacts(
                 matching: "",
-                page: PageRequest(cursor: cursor, limit: 200)
+                page: PageRequest(cursor: cursor, limit: contactPageSize)
             )
             allContacts.append(contentsOf: page.items)
             cursor = page.hasMore ? page.nextCursor : nil
         } while cursor != nil
 
         return allContacts
-    }
-
-    private func loadMessages(for conversations: [Conversation]) async throws -> [Message] {
-        var allMessages: [Message] = []
-        allMessages.reserveCapacity(conversations.count * min(messagePageSize, 120))
-
-        for conversation in conversations {
-            try Task.checkCancellation()
-            var cursor: PageCursor?
-            var loadedForConversation = 0
-
-            repeat {
-                let page = try await messages.messages(
-                    in: conversation.id,
-                    page: PageRequest(cursor: cursor, limit: messagePageSize, direction: .older),
-                    around: nil
-                )
-                allMessages.append(contentsOf: page.items)
-                loadedForConversation += page.items.count
-                cursor = page.hasMore && loadedForConversation < maxMessagesPerConversation ? page.nextCursor : nil
-            } while cursor != nil
-        }
-
-        return allMessages
     }
 }
 

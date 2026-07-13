@@ -772,9 +772,29 @@ struct IndexingStatusView: View {
     }
 }
 
+/// A single non-tapback action shown in the menu below the tapback capsule
+/// (e.g. Open Thread, Copy Text, Add to Calendar). Mirrors what the system
+/// context menu used to offer, now hosted inside the floating pill.
+struct TapbackPillAction: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let isEnabled: Bool
+    let perform: () -> Void
+
+    init(title: String, systemImage: String, isEnabled: Bool = true, perform: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isEnabled = isEnabled
+        self.perform = perform
+    }
+}
+
 /// Floating iMessage-style tapback picker shown on right-click of a message
 /// bubble, replacing the system context menu. A horizontal capsule of the six
-/// standard tapbacks plus a trailing "+" that opens the custom-emoji picker.
+/// standard tapbacks plus a trailing "+" that opens the custom-emoji picker,
+/// followed by a vertical list of message actions (Open Thread, Copy Text,
+/// Add to Calendar) that the pill inherited from the old context menu.
 struct TapbackPill: View {
     /// The six canonical tapbacks, in the order iMessage presents them.
     static let tapbackKinds: [MessageReactionKind] = [.loved, .liked, .disliked, .laughed, .emphasized, .questioned]
@@ -783,48 +803,84 @@ struct TapbackPill: View {
     let selectedKind: MessageReactionKind?
     let onTapback: (MessageReactionKind) -> Void
     let onCustom: () -> Void
+    /// Extra message actions rendered as a menu below the tapback capsule.
+    var actions: [TapbackPillAction] = []
 
     @State private var hovered: MessageReactionKind?
     @State private var plusHovered = false
+    @State private var hoveredActionID: UUID?
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(TapbackPill.tapbackKinds, id: \.self) { kind in
-                Button {
-                    onTapback(kind)
-                } label: {
-                    Text(ReactionCluster.emoji(for: kind, displayText: nil))
-                        .font(.system(size: 18))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 2) {
+                ForEach(TapbackPill.tapbackKinds, id: \.self) { kind in
+                    Button {
+                        onTapback(kind)
+                    } label: {
+                        Text(ReactionCluster.emoji(for: kind, displayText: nil))
+                            .font(.system(size: 18))
+                            .frame(width: 32, height: 32)
+                            .background(fill(isSelected: selectedKind == kind, isHovered: hovered == kind))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
+                    .help(ReactionCluster.title(for: kind))
+                    .accessibilityLabel(ReactionCluster.title(for: kind))
+                    .accessibilityAddTraits(selectedKind == kind ? [.isSelected] : [])
+                }
+
+                Divider()
+                    .frame(height: 20)
+                    .padding(.horizontal, 2)
+
+                Button(action: onCustom) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
                         .frame(width: 32, height: 32)
-                        .background(fill(isSelected: selectedKind == kind, isHovered: hovered == kind))
+                        .background(fill(isSelected: false, isHovered: plusHovered))
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .onHover { hovered = $0 ? kind : (hovered == kind ? nil : hovered) }
-                .help(ReactionCluster.title(for: kind))
-                .accessibilityLabel(ReactionCluster.title(for: kind))
-                .accessibilityAddTraits(selectedKind == kind ? [.isSelected] : [])
+                .onHover { plusHovered = $0 }
+                .help("React with emoji")
+                .accessibilityLabel("React with emoji")
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
 
-            Divider()
-                .frame(height: 20)
-                .padding(.horizontal, 2)
+            if !actions.isEmpty {
+                Divider()
+                    .padding(.horizontal, 6)
 
-            Button(action: onCustom) {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
-                    .background(fill(isSelected: false, isHovered: plusHovered))
-                    .contentShape(Circle())
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(actions) { action in
+                        Button(action: action.perform) {
+                            Label(action.title, systemImage: action.systemImage)
+                                .font(.callout)
+                                .labelStyle(.titleAndIcon)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(hoveredActionID == action.id && action.isEnabled ? Color.primary.opacity(0.08) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!action.isEnabled)
+                        .onHover { hoveredActionID = $0 ? action.id : (hoveredActionID == action.id ? nil : hoveredActionID) }
+                        .accessibilityLabel(action.title)
+                    }
+                }
+                .padding(.horizontal, 5)
+                .padding(.top, 4)
+                .padding(.bottom, 5)
             }
-            .buttonStyle(.plain)
-            .onHover { plusHovered = $0 }
-            .help("React with emoji")
-            .accessibilityLabel("React with emoji")
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .frame(minWidth: actions.isEmpty ? nil : 220, alignment: .leading)
     }
 
     private func fill(isSelected: Bool, isHovered: Bool) -> some View {

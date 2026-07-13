@@ -2203,7 +2203,18 @@ final class AppViewModel: ObservableObject {
             do {
                 if exactEnabled {
                     try Task.checkCancellation()
-                    try await indexer.rebuildExactIndex { _ in }
+                    // A first full-history build takes minutes on a large
+                    // library; surface the real fraction so the user can see
+                    // it advancing instead of an idle spinner.
+                    try await indexer.rebuildExactIndex { [weak self] fraction in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.indexingTaskGeneration == generation else { return }
+                            self.indexingProgress.exactProgress = fraction
+                            self.indexingProgress.message = fraction < 1
+                                ? "Indexing messages (\(Int(fraction * 100))%)"
+                                : initialMessage
+                        }
+                    }
                 }
 
                 if semanticEnabled {
@@ -2213,7 +2224,15 @@ final class AppViewModel: ObservableObject {
                         self.indexingProgress.exactProgress = exactEnabled ? 1 : 0
                         self.indexingProgress.message = "Indexing semantic search"
                     }
-                    try await indexer.rebuildSemanticIndex { _ in }
+                    try await indexer.rebuildSemanticIndex { [weak self] fraction in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.indexingTaskGeneration == generation else { return }
+                            self.indexingProgress.semanticProgress = fraction
+                            if fraction < 1 {
+                                self.indexingProgress.message = "Indexing semantic search (\(Int(fraction * 100))%)"
+                            }
+                        }
+                    }
                 }
 
                 try Task.checkCancellation()

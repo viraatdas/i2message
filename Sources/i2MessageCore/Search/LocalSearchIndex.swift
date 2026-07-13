@@ -47,15 +47,17 @@ actor LocalSearchIndex {
             let pendingSemanticEmbeddingCount = try Int.fetchOne(
                 db,
                 sql: """
+                WITH eligible AS (\(semanticEligibilitySQL))
                 SELECT COUNT(*)
-                FROM search_documents d
+                FROM eligible el
+                JOIN search_documents d ON d.doc_id = el.doc_id
                 LEFT JOIN semantic_embeddings e
                     ON e.doc_id = d.doc_id
                     AND e.model_id = ?
                     AND e.hash = d.hash
                 WHERE e.doc_id IS NULL
                 """,
-                arguments: [modelIdentifier]
+                arguments: [semanticScanLimit, modelIdentifier]
             ) ?? documentCount
 
             return LocalSearchIndexState(
@@ -67,38 +69,83 @@ actor LocalSearchIndex {
         }
     }
 
-    func resumeOffset(namespace: String, signature: String) throws -> Int {
-        let storedSignature = try metadataValue("\(namespace).signature")
-        guard storedSignature == signature else {
-            try setMetadataValue(signature, forKey: "\(namespace).signature")
-            try setMetadataValue("0", forKey: "\(namespace).offset")
-            return 0
-        }
-
-        return Int(try metadataValue("\(namespace).offset") ?? "0") ?? 0
-    }
-
-    func updateResumeOffset(_ offset: Int, namespace: String) throws {
-        try setMetadataValue(String(offset), forKey: "\(namespace).offset")
-    }
-
     func markRebuildComplete(namespace: String) throws {
         try setMetadataValue("complete", forKey: "\(namespace).state")
     }
 
-    /// doc_id → content hash for every indexed document. Lets a rebuild skip
-    /// rows whose content is unchanged, which avoids needlessly replacing them
-    /// (a replace cascade-deletes the row's semantic embedding).
-    func existingDocumentHashes() throws -> [String: String] {
+    func documentCount(kind: SearchResultKind) throws -> Int {
+        let pool = try pool()
+        return try pool.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM search_documents WHERE kind = ?",
+                arguments: [kind.rawValue]
+            ) ?? 0
+        }
+    }
+
+    /// Per-conversation content signatures recorded by completed indexing
+    /// passes. A rebuild skips streaming any conversation whose signature is
+    /// unchanged, which is what makes reindexing a large library incremental
+    /// and resumable (interrupted passes simply lack signatures for the
+    /// conversations they never finished).
+    func conversationSignatures() throws -> [String: String] {
         let pool = try pool()
         return try pool.read { db in
             var result: [String: String] = [:]
-            let rows = try Row.fetchAll(db, sql: "SELECT doc_id, hash FROM search_documents")
+            let rows = try Row.fetchAll(db, sql: "SELECT conversation_id, signature FROM indexed_conversations")
             result.reserveCapacity(rows.count)
             for row in rows {
-                let docID: String = row["doc_id"]
-                let hash: String = row["hash"]
-                result[docID] = hash
+                let conversationID: String = row["conversation_id"]
+                let signature: String = row["signature"]
+                result[conversationID] = signature
+            }
+            return result
+        }
+    }
+
+    func setConversationSignature(_ signature: String, conversationID: String) throws {
+        let pool = try pool()
+        try pool.write { db in
+            try db.execute(
+                sql: """
+                INSERT OR REPLACE INTO indexed_conversations (conversation_id, signature, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [conversationID, signature, Date().timeIntervalSince1970]
+            )
+        }
+    }
+
+    /// doc_id → content hash for the given documents only, so a streaming
+    /// rebuild never has to hold the full 700k-row hash map in memory. Lets a
+    /// rebuild skip rows whose content is unchanged, which avoids needlessly
+    /// replacing them (a replace cascade-deletes the row's semantic embedding).
+    func documentHashes(for documentIDs: [String]) throws -> [String: String] {
+        guard !documentIDs.isEmpty else {
+            return [:]
+        }
+
+        let pool = try pool()
+        return try pool.read { db in
+            var result: [String: String] = [:]
+            result.reserveCapacity(documentIDs.count)
+            let chunkSize = 500
+            var start = 0
+            while start < documentIDs.count {
+                let chunk = Array(documentIDs[start..<min(start + chunkSize, documentIDs.count)])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: "SELECT doc_id, hash FROM search_documents WHERE doc_id IN (\(placeholders))",
+                    arguments: StatementArguments(chunk)
+                )
+                for row in rows {
+                    let docID: String = row["doc_id"]
+                    let hash: String = row["hash"]
+                    result[docID] = hash
+                }
+                start += chunkSize
             }
             return result
         }
@@ -172,10 +219,17 @@ actor LocalSearchIndex {
         }
     }
 
-    func deleteDocuments(excluding validIDs: Set<String>) throws {
+    /// Removes stale documents inside one conversation (messages that were
+    /// deleted or retracted since the last pass). Scoped per conversation so
+    /// the sweep never scans the whole table.
+    func deleteDocuments(conversationID: String, excluding validIDs: Set<String>) throws {
         let pool = try pool()
         try pool.write { db in
-            let rows = try Row.fetchAll(db, sql: "SELECT doc_id, fts_rowid FROM search_documents")
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT doc_id, fts_rowid FROM search_documents WHERE conversation_id = ?",
+                arguments: [conversationID]
+            )
             for row in rows {
                 let docID: String = row["doc_id"]
                 guard !validIDs.contains(docID) else {
@@ -184,6 +238,65 @@ actor LocalSearchIndex {
 
                 let rowID: Int64 = row["fts_rowid"]
                 try db.execute(sql: "DELETE FROM search_fts WHERE rowid = ?", arguments: [rowID])
+                try db.execute(sql: "DELETE FROM semantic_embeddings WHERE doc_id = ?", arguments: [docID])
+                try db.execute(sql: "DELETE FROM search_documents WHERE doc_id = ?", arguments: [docID])
+            }
+        }
+    }
+
+    /// Removes documents for conversations that no longer exist and contact
+    /// documents for contacts that disappeared. Works off the small distinct
+    /// conversation/contact id sets rather than scanning every document row.
+    func pruneDocuments(validConversationIDs: Set<String>, validContactDocumentIDs: Set<String>) throws {
+        let pool = try pool()
+
+        let staleConversationIDs: [String] = try pool.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT DISTINCT conversation_id FROM search_documents WHERE conversation_id IS NOT NULL"
+            ).filter { !validConversationIDs.contains($0) }
+        }
+
+        let staleContactDocIDs: [String] = try pool.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT doc_id FROM search_documents WHERE kind = 'contact'"
+            ).filter { !validContactDocumentIDs.contains($0) }
+        }
+
+        guard !staleConversationIDs.isEmpty || !staleContactDocIDs.isEmpty else {
+            return
+        }
+
+        try pool.write { db in
+            for conversationID in staleConversationIDs {
+                let rows = try Row.fetchAll(
+                    db,
+                    sql: "SELECT doc_id, fts_rowid FROM search_documents WHERE conversation_id = ?",
+                    arguments: [conversationID]
+                )
+                for row in rows {
+                    let docID: String = row["doc_id"]
+                    let rowID: Int64 = row["fts_rowid"]
+                    try db.execute(sql: "DELETE FROM search_fts WHERE rowid = ?", arguments: [rowID])
+                    try db.execute(sql: "DELETE FROM semantic_embeddings WHERE doc_id = ?", arguments: [docID])
+                    try db.execute(sql: "DELETE FROM search_documents WHERE doc_id = ?", arguments: [docID])
+                }
+                try db.execute(
+                    sql: "DELETE FROM indexed_conversations WHERE conversation_id = ?",
+                    arguments: [conversationID]
+                )
+            }
+
+            for docID in staleContactDocIDs {
+                let rowID = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT fts_rowid FROM search_documents WHERE doc_id = ?",
+                    arguments: [docID]
+                )
+                if let rowID {
+                    try db.execute(sql: "DELETE FROM search_fts WHERE rowid = ?", arguments: [rowID])
+                }
                 try db.execute(sql: "DELETE FROM semantic_embeddings WHERE doc_id = ?", arguments: [docID])
                 try db.execute(sql: "DELETE FROM search_documents WHERE doc_id = ?", arguments: [docID])
             }
@@ -210,6 +323,18 @@ actor LocalSearchIndex {
                 try db.execute(sql: "DELETE FROM search_fts WHERE rowid = ?", arguments: [rowID])
                 try db.execute(sql: "DELETE FROM semantic_embeddings WHERE doc_id = ?", arguments: [docID])
                 try db.execute(sql: "DELETE FROM search_documents WHERE doc_id = ?", arguments: [docID])
+            }
+
+            // Drop the affected conversation signatures too, otherwise the next
+            // rebuild would consider the invalidated conversations up to date
+            // and never re-stream their documents.
+            if let conversationID {
+                try db.execute(
+                    sql: "DELETE FROM indexed_conversations WHERE conversation_id = ?",
+                    arguments: [conversationID.rawValue]
+                )
+            } else {
+                try db.execute(sql: "DELETE FROM indexed_conversations")
             }
 
             try db.execute(sql: "DELETE FROM search_metadata WHERE key LIKE 'exact.%' OR key LIKE 'semantic.%'")
@@ -349,23 +474,37 @@ actor LocalSearchIndex {
         }
     }
 
+    /// Only the most recent `semanticScanLimit` documents are eligible for
+    /// semantic embedding. Exact FTS search still covers everything; embedding
+    /// the full history locally is prohibitive on large libraries, so the
+    /// semantic layer is bounded to the newest slice, embedded newest-first.
+    private var semanticEligibilitySQL: String {
+        """
+        SELECT doc_id, hash FROM search_documents
+        ORDER BY sent_at DESC, doc_id ASC
+        LIMIT ?
+        """
+    }
+
     func documentsNeedingSemanticEmbeddings(modelIdentifier: String, limit: Int) throws -> [SearchIndexDocument] {
         let pool = try pool()
         return try pool.read { db in
             let rows = try Row.fetchAll(
                 db,
                 sql: """
+                WITH eligible AS (\(semanticEligibilitySQL))
                 SELECT d.*
-                FROM search_documents d
+                FROM eligible el
+                JOIN search_documents d ON d.doc_id = el.doc_id
                 LEFT JOIN semantic_embeddings e
                     ON e.doc_id = d.doc_id
                     AND e.model_id = ?
                     AND e.hash = d.hash
                 WHERE e.doc_id IS NULL
-                ORDER BY d.doc_id ASC
+                ORDER BY d.sent_at DESC, d.doc_id ASC
                 LIMIT ?
                 """,
-                arguments: [modelIdentifier, max(1, limit)]
+                arguments: [semanticScanLimit, modelIdentifier, max(1, limit)]
             )
             return rows.map(document(from:))
         }
@@ -377,15 +516,17 @@ actor LocalSearchIndex {
             try Int.fetchOne(
                 db,
                 sql: """
+                WITH eligible AS (\(semanticEligibilitySQL))
                 SELECT COUNT(*)
-                FROM search_documents d
+                FROM eligible el
+                JOIN search_documents d ON d.doc_id = el.doc_id
                 LEFT JOIN semantic_embeddings e
                     ON e.doc_id = d.doc_id
                     AND e.model_id = ?
                     AND e.hash = d.hash
                 WHERE e.doc_id IS NULL
                 """,
-                arguments: [modelIdentifier]
+                arguments: [semanticScanLimit, modelIdentifier]
             ) ?? 0
         }
     }
@@ -549,6 +690,15 @@ actor LocalSearchIndex {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_search_documents_sent_at ON search_documents(sent_at)")
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_search_documents_service ON search_documents(service)")
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_semantic_embeddings_model ON semantic_embeddings(model_id)")
+        }
+        migrator.registerMigration("create conversation index state") { db in
+            try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS indexed_conversations (
+                conversation_id TEXT PRIMARY KEY NOT NULL,
+                signature TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """)
         }
         return migrator
     }
