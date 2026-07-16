@@ -14,6 +14,7 @@ struct ContentView: View {
             || model.isNewMessagePresented
             || model.isInfoPanelPresented
             || model.isReminderPresented
+            || model.messageEditDraft != nil
     }
 
     private var sidebarWidth: CGFloat {
@@ -71,6 +72,10 @@ struct ContentView: View {
                 .environmentObject(model)
                 .frame(minWidth: 660, minHeight: 540)
         }
+        .sheet(item: $model.messageEditDraft) { _ in
+            MessageEditSheet()
+                .environmentObject(model)
+        }
         .overlay {
             Group {
                 if model.isCommandPalettePresented {
@@ -127,6 +132,94 @@ struct ContentView: View {
         .background(I2Palette.appBackground)
         .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.selectedConversationID)
         .animation(I2Motion.stateChange(reduceMotion: reduceMotion), value: model.sidebarDestination)
+    }
+}
+
+private struct MessageEditSheet: View {
+    @EnvironmentObject private var model: AppViewModel
+    @FocusState private var editorFocused: Bool
+
+    var body: some View {
+        if let draft = model.messageEditDraft {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 10) {
+                    Image(systemName: "pencil.line")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Edit Message Text")
+                            .font(.title3.weight(.semibold))
+                        Text(draft.editsLocally ? "Sample transcript" : "Finish securely in Messages.app")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(instructions(for: draft))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                TextEditor(text: Binding(
+                    get: { model.messageEditDraft?.text ?? "" },
+                    set: { model.updateMessageEditText($0) }
+                ))
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(I2Palette.elevatedBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(I2Palette.separator, lineWidth: 1)
+                }
+                .focused($editorFocused)
+                .accessibilityLabel("Edited message text")
+
+                HStack {
+                    if !draft.editsLocally {
+                        Label("iMessage allows up to 5 edits within 15 minutes", systemImage: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Cancel") {
+                        model.cancelMessageEdit()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(model.isCompletingMessageEdit)
+
+                    Button {
+                        Task { await model.completeMessageEdit() }
+                    } label: {
+                        if model.isCompletingMessageEdit {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label(
+                                draft.editsLocally ? "Save Edit" : "Copy & Open Messages",
+                                systemImage: draft.editsLocally ? "checkmark" : "arrow.up.forward.app"
+                            )
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!model.canCompleteMessageEdit)
+                }
+            }
+            .padding(22)
+            .frame(width: 540, height: 360)
+            .interactiveDismissDisabled(model.isCompletingMessageEdit)
+            .onAppear { editorFocused = true }
+        }
+    }
+
+    private func instructions(for draft: MessageEditDraft) -> String {
+        if draft.editsLocally {
+            return "Change the text below. Saving keeps the previous version in the message's edit history."
+        }
+        return "macOS doesn't expose a supported edit command to other apps. Your replacement will be copied and Messages will open; Control-click the original bubble, choose Edit, paste, then press Return."
     }
 }
 

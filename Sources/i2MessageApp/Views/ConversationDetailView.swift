@@ -597,6 +597,17 @@ private struct MessageBubble: View {
             })
         }
 
+        if isOutgoing, !message.body.plainText.isEmpty {
+            actions.append(TapbackPillAction(title: "Edit Text…", systemImage: "pencil") {
+                isTapbackPillPresented = false
+                // Let the tapback popover finish dismissing before presenting
+                // the edit sheet; AppKit can otherwise drop the second surface.
+                DispatchQueue.main.async {
+                    model.beginEditingMessage(message)
+                }
+            })
+        }
+
         actions.append(TapbackPillAction(
             title: "Copy Text",
             systemImage: "doc.on.doc",

@@ -66,6 +66,8 @@ final class AppViewModel: ObservableObject {
     private var locallyUnreadIDs: Set<ConversationID> = []
     private var locallyReadIDs: Set<ConversationID> = []
     @Published var isSettingsPresented = false
+    @Published var messageEditDraft: MessageEditDraft?
+    @Published private(set) var isCompletingMessageEdit = false
     @Published private(set) var focusRequest: FocusRequest?
     @Published private(set) var statusBanner: StatusBanner?
     private var bannerDismissTask: Task<Void, Never>?
@@ -550,6 +552,8 @@ final class AppViewModel: ObservableObject {
             isInfoPanelPresented = false
         } else if isReminderPresented {
             closeReminderPanel()
+        } else if messageEditDraft != nil {
+            cancelMessageEdit()
         } else if isSettingsPresented {
             isSettingsPresented = false
         } else if isThreadPanelPresented {
@@ -1262,6 +1266,149 @@ final class AppViewModel: ObservableObject {
     /// selected state of the floating tapback pill.
     func currentUserReaction(on message: Message) -> MessageReaction? {
         message.reactions.first { $0.senderID == dependencies.seed.currentUser.id }
+    }
+
+    /// Begins editing an outgoing iMessage. Fixture transcripts are mutable so
+    /// previews/tests can demonstrate the full interaction. Real chat.db rows
+    /// remain read-only and finish through a pasteboard + Messages.app handoff.
+    func beginEditingMessage(_ message: Message) {
+        let editsLocally = !dependencies.isLiveData
+            || (transcriptPages[message.conversationID]?.usesFixtureData ?? false)
+
+        if let restriction = messageEditRestriction(for: message, editsLocally: editsLocally) {
+            showBanner(tone: .warning, title: "Can't edit this message", message: restriction)
+            return
+        }
+
+        messageEditDraft = MessageEditDraft(
+            message: message,
+            text: message.body.plainText,
+            editsLocally: editsLocally
+        )
+    }
+
+    func updateMessageEditText(_ text: String) {
+        messageEditDraft?.text = text
+    }
+
+    func cancelMessageEdit() {
+        guard !isCompletingMessageEdit else { return }
+        messageEditDraft = nil
+    }
+
+    var canCompleteMessageEdit: Bool {
+        guard let draft = messageEditDraft else { return false }
+        return !isCompletingMessageEdit
+            && !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && draft.text != draft.originalText
+    }
+
+    func completeMessageEdit() async {
+        guard let draft = messageEditDraft, canCompleteMessageEdit else { return }
+        if let restriction = messageEditRestriction(for: draft.message, editsLocally: draft.editsLocally) {
+            showBanner(tone: .warning, title: "Can't edit this message", message: restriction)
+            messageEditDraft = nil
+            return
+        }
+
+        isCompletingMessageEdit = true
+        defer { isCompletingMessageEdit = false }
+
+        if draft.editsLocally {
+            completeFixtureMessageEdit(draft)
+            return
+        }
+
+        guard let actions = dependencies.messagingActions else {
+            showBanner(
+                tone: .error,
+                title: "Messages handoff unavailable",
+                message: "The edited text is still here. Try again after reopening i2Message."
+            )
+            return
+        }
+
+        let conversation = conversations.first { $0.id == draft.message.conversationID }
+            ?? (selectedConversation?.id == draft.message.conversationID ? selectedConversation : nil)
+        do {
+            _ = try await actions.preparePasteHandoff(PasteHandoffRequest(text: draft.text))
+            _ = try await actions.openConversation(
+                ConversationHandoffRequest(
+                    conversationID: draft.message.conversationID,
+                    displayTitle: conversation?.title,
+                    handles: conversation?.participants.flatMap(\.handles) ?? []
+                )
+            )
+            messageEditDraft = nil
+            showBanner(
+                tone: .info,
+                title: "Edited text copied",
+                message: "In Messages, Control-click the message, choose Edit, paste, then press Return."
+            )
+        } catch {
+            showBanner(tone: .error, title: "Could not open Messages", message: userFacingMessage(for: error))
+        }
+    }
+
+    private func messageEditRestriction(for message: Message, editsLocally: Bool) -> String? {
+        guard message.direction == .outgoing else {
+            return "Only messages you sent can be edited."
+        }
+        guard !message.isDeleted else {
+            return "An unsent message can no longer be edited."
+        }
+        guard !message.body.plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "This message has no editable text."
+        }
+        guard supportsNativeMessageEditing(message) else {
+            return "Apple doesn't support editing this direct SMS, MMS, or RCS message."
+        }
+        guard message.editHistory.count < 5 else {
+            return "Apple limits a sent message to five edits."
+        }
+        if !editsLocally, Date().timeIntervalSince(message.sentAt) > 15 * 60 {
+            return "Apple's 15-minute edit window has expired."
+        }
+        return nil
+    }
+
+    private func supportsNativeMessageEditing(_ message: Message) -> Bool {
+        if message.service == .iMessage {
+            return true
+        }
+
+        // Apple also permits updates in mixed-protocol group conversations
+        // when at least one other participant uses iMessage.
+        guard let conversation = conversations.first(where: { $0.id == message.conversationID }),
+              conversation.kind == .group else {
+            return false
+        }
+        return conversation.service == .iMessage
+            || conversation.participants.contains { participant in
+                !participant.isCurrentUser && participant.handles.contains { $0.service == .iMessage }
+            }
+    }
+
+    private func completeFixtureMessageEdit(_ draft: MessageEditDraft) {
+        var state = transcriptPages[draft.message.conversationID] ?? .empty
+        guard let index = state.messages.firstIndex(where: { $0.id == draft.message.id }) else {
+            showBanner(tone: .error, title: "Message unavailable", message: "Reload the conversation and try again.")
+            return
+        }
+
+        let originalText = state.messages[index].body.plainText
+        state.messages[index].editHistory.append(MessageEditVersion(text: originalText, editedAt: Date()))
+        state.messages[index].body = .text(draft.text)
+        state.messages[index].isEdited = true
+        transcriptPages[draft.message.conversationID] = state
+
+        if let conversationIndex = conversations.firstIndex(where: { $0.id == draft.message.conversationID }),
+           conversations[conversationIndex].lastMessage?.messageID == draft.message.id {
+            conversations[conversationIndex].lastMessage?.text = draft.text
+        }
+
+        messageEditDraft = nil
+        showBanner(tone: .success, title: "Message text updated", message: "The sample transcript now includes the edit history.")
     }
 
     func toggleReaction(_ kind: MessageReactionKind, on message: Message) {

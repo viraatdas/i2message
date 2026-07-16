@@ -130,6 +130,129 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
+    func testFixtureOutgoingMessageEditUpdatesTextAndKeepsHistory() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let original = try XCTUnwrap(model.selectedMessages.last {
+            $0.direction == .outgoing && $0.service == .iMessage && !$0.body.plainText.isEmpty
+        })
+        let replacement = "Updated fixture message text"
+
+        model.beginEditingMessage(original)
+        XCTAssertEqual(model.messageEditDraft?.text, original.body.plainText)
+        XCTAssertEqual(model.messageEditDraft?.editsLocally, true)
+
+        model.updateMessageEditText(replacement)
+        XCTAssertTrue(model.canCompleteMessageEdit)
+        await model.completeMessageEdit()
+
+        let updated = try XCTUnwrap(model.selectedMessages.first { $0.id == original.id })
+        XCTAssertEqual(updated.body.plainText, replacement)
+        XCTAssertTrue(updated.isEdited)
+        XCTAssertEqual(updated.editHistory.last?.text, original.body.plainText)
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertEqual(model.statusBanner?.tone, .success)
+    }
+
+    func testIncomingAndNonIMessageMessagesExplainWhyTheyCannotBeEdited() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+
+        let incoming = try XCTUnwrap(model.selectedMessages.first { $0.direction == .incoming })
+        model.beginEditingMessage(incoming)
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertEqual(model.statusBanner?.title, "Can't edit this message")
+        XCTAssertTrue(model.statusBanner?.message.contains("Only messages you sent") == true)
+
+        var sms = incoming
+        sms.id = MessageID(rawValue: "test.sms.edit")
+        sms.direction = .outgoing
+        sms.service = .sms
+        model.beginEditingMessage(sms)
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertTrue(model.statusBanner?.message.contains("SMS") == true)
+
+        let mixedGroup = try XCTUnwrap(model.conversations.first {
+            $0.kind == .group && $0.participants.contains(where: { participant in
+                !participant.isCurrentUser && participant.handles.contains(where: { $0.service == .iMessage })
+            })
+        })
+        sms.id = MessageID(rawValue: "test.mixed-group.edit")
+        sms.conversationID = mixedGroup.id
+        model.beginEditingMessage(sms)
+        XCTAssertEqual(model.messageEditDraft?.message.id, sms.id)
+        model.cancelMessageEdit()
+    }
+
+    func testLiveMessageEditCopiesReplacementAndOpensMessagesHandoff() async throws {
+        var dependencies = AppDependencies.test()
+        let actions = RecordingMessagingActions()
+        dependencies.isLiveData = true
+        dependencies.messagingActions = actions
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        let liveConversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(liveConversationID)
+        XCTAssertFalse(model.selectedTranscriptState.usesFixtureData)
+        let conversation = try XCTUnwrap(model.selectedConversation)
+        let recentMessage = Message(
+            id: MessageID(rawValue: "test.live.edit"),
+            conversationID: conversation.id,
+            senderID: dependencies.seed.currentUser.id,
+            body: .text("Original live text"),
+            direction: .outgoing,
+            service: .iMessage,
+            status: .sent,
+            sentAt: Date().addingTimeInterval(-60)
+        )
+
+        model.beginEditingMessage(recentMessage)
+        XCTAssertEqual(model.messageEditDraft?.editsLocally, false)
+        model.updateMessageEditText("Corrected live text")
+        await model.completeMessageEdit()
+
+        let recorded = await actions.recordedHandoffs()
+        XCTAssertEqual(recorded.paste.map(\.text), ["Corrected live text"])
+        XCTAssertEqual(recorded.open.map(\.conversationID), [conversation.id])
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertEqual(model.statusBanner?.title, "Edited text copied")
+    }
+
+    func testLiveMessageEditRejectsExpiredWindowAndFifthPriorEdit() async throws {
+        var dependencies = AppDependencies.test()
+        dependencies.isLiveData = true
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        let conversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(conversationID)
+        XCTAssertFalse(model.selectedTranscriptState.usesFixtureData)
+        var message = Message(
+            id: MessageID(rawValue: "test.expired.edit"),
+            conversationID: conversationID,
+            senderID: dependencies.seed.currentUser.id,
+            body: .text("Too old"),
+            direction: .outgoing,
+            service: .iMessage,
+            status: .sent,
+            sentAt: Date().addingTimeInterval(-(15 * 60 + 1))
+        )
+
+        model.beginEditingMessage(message)
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertTrue(model.statusBanner?.message.contains("15-minute") == true)
+
+        message.sentAt = Date()
+        message.editHistory = (0..<5).map {
+            MessageEditVersion(text: "Version \($0)", editedAt: Date().addingTimeInterval(Double($0)))
+        }
+        model.beginEditingMessage(message)
+        XCTAssertNil(model.messageEditDraft)
+        XCTAssertTrue(model.statusBanner?.message.contains("five edits") == true)
+    }
+
     func testLiveConversationFailureCannotSendFixtureRecipient() async {
         var dependencies = AppDependencies.test()
         let sender = SlowCountingMessageSender(delayNanoseconds: 0)
@@ -1179,5 +1302,83 @@ private actor CancellableSearchIndexer: SearchIndexing {
 
     func counts() -> (started: Int, cancelled: Int, completed: Int) {
         (started, cancelled, completed)
+    }
+}
+
+private actor RecordingMessagingActions: MessagingActionServicing {
+    private var pasteRequests: [PasteHandoffRequest] = []
+    private var openRequests: [ConversationHandoffRequest] = []
+
+    func availabilitySnapshot() async -> MessagingActionAvailabilitySnapshot {
+        .conservativeDefault(checkedAt: Date())
+    }
+
+    func validate(_ draft: MessageDraft) async throws -> SendOperation {
+        SendOperation(
+            id: "recording.validate",
+            draft: draft,
+            state: .validating,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+    }
+
+    func send(_ draft: MessageDraft) async throws -> SendReceipt {
+        let conversationID: ConversationID?
+        if case .existingConversation(let id) = draft.target {
+            conversationID = id
+        } else {
+            conversationID = nil
+        }
+        return SendReceipt(
+            operationID: "recording.send",
+            conversationID: conversationID,
+            messageID: nil,
+            sentAt: Date()
+        )
+    }
+
+    func startConversation(_ draft: MessageDraft) async throws -> SendReceipt {
+        try await send(draft)
+    }
+
+    func reply(_ draft: MessageDraft, to messageID: MessageID) async throws -> SendReceipt {
+        try await send(draft)
+    }
+
+    func openConversation(_ request: ConversationHandoffRequest) async throws -> MessagingActionResult {
+        openRequests.append(request)
+        return result(kind: .openInMessages, outcome: .handedOff)
+    }
+
+    func handoffContact(_ request: ContactHandoffRequest) async throws -> MessagingActionResult {
+        result(kind: .contactHandoff, outcome: .handedOff)
+    }
+
+    func preparePasteHandoff(_ request: PasteHandoffRequest) async throws -> MessagingActionResult {
+        pasteRequests.append(request)
+        return result(kind: .pasteHandoff, outcome: .completed)
+    }
+
+    func dragItems(for request: DragHandoffRequest) async throws -> [MessagingHandoffItem] {
+        []
+    }
+
+    func markRead(_ request: MarkReadRequest) async throws -> MessagingActionResult {
+        result(kind: .markRead, outcome: .completed)
+    }
+
+    func recordedHandoffs() -> (paste: [PasteHandoffRequest], open: [ConversationHandoffRequest]) {
+        (pasteRequests, openRequests)
+    }
+
+    private func result(kind: MessagingActionKind, outcome: MessagingActionOutcome) -> MessagingActionResult {
+        MessagingActionResult(
+            id: "recording.\(kind.rawValue)",
+            kind: kind,
+            outcome: outcome,
+            completedAt: Date(),
+            userMessage: "Recorded test action."
+        )
     }
 }

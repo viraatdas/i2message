@@ -93,6 +93,18 @@ struct PendingNewConversation: Equatable {
     var handles: [ContactHandle]
 }
 
+/// The replacement text being prepared for a sent message. Fixture content can
+/// be updated locally; live Messages content must finish through Messages.app
+/// because macOS exposes no supported sent-message edit automation command.
+struct MessageEditDraft: Identifiable, Equatable {
+    var message: Message
+    var text: String
+    var editsLocally: Bool
+
+    var id: MessageID { message.id }
+    var originalText: String { message.body.plainText }
+}
+
 /// A link discovered inside a conversation's messages, shown in the Cmd+I info panel.
 struct SharedLink: Identifiable, Equatable {
     var url: URL

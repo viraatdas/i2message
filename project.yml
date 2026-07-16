@@ -45,9 +45,9 @@ targets:
         product: Logging
     settings:
       base:
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 0.1.5
+        MARKETING_VERSION: 0.1.6
         PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.core
         SKIP_INSTALL: YES
 
@@ -81,9 +81,9 @@ targets:
       - target: i2MessageCore
     settings:
       base:
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 0.1.5
+        MARKETING_VERSION: 0.1.6
         PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.core-tests
 
   i2MessageAppTests:
@@ -96,9 +96,9 @@ targets:
     hostApplication: i2Message
     settings:
       base:
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 0.1.5
+        MARKETING_VERSION: 0.1.6
         PRODUCT_BUNDLE_IDENTIFIER: dev.viraat.i2message.app-tests
 
 schemes:
