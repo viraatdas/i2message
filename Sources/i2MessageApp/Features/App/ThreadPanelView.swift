@@ -65,7 +65,11 @@ struct ThreadPanelView: View {
                 isComposerFocused = true
             }
 
-            TextField("Reply in thread…", text: $model.threadDraftText, axis: .vertical)
+            TextField(
+                model.isUsingLiveData ? "Continue reply in Messages…" : "Reply in thread…",
+                text: $model.threadDraftText,
+                axis: .vertical
+            )
                 .textFieldStyle(.plain)
                 .focused($isComposerFocused)
                 .lineLimit(1...5)
@@ -82,19 +86,19 @@ struct ThreadPanelView: View {
                     }
                 }
                 .accessibilityLabel("Thread reply composer")
-                .accessibilityHint("Type a reply for the open thread")
+                .accessibilityHint(model.isUsingLiveData ? "The draft will open in Messages for a real threaded reply" : "Type a reply for the open thread")
 
             Button {
                 Task { await model.sendThreadReply() }
             } label: {
-                Image(systemName: "paperplane.fill")
+                Image(systemName: model.isUsingLiveData ? "arrow.up.forward.app.fill" : "paperplane.fill")
             }
             .buttonStyle(.borderedProminent)
             .labelStyle(.iconOnly)
             .disabled(!model.canSendThreadReply)
-            .help("Send reply in thread (Return)")
-            .accessibilityLabel("Send thread reply")
-            .accessibilityHint("Sends the draft in the thread panel")
+            .help(model.isUsingLiveData ? "Continue threaded reply in Messages (Return)" : "Send reply in thread (Return)")
+            .accessibilityLabel(model.isUsingLiveData ? "Continue reply in Messages" : "Send thread reply")
+            .accessibilityHint(model.isUsingLiveData ? "Copies the draft and opens Messages for the threaded reply" : "Sends the draft in the thread panel")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

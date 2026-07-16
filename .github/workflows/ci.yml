@@ -11,6 +11,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Use newest available Xcode
+        # macos-latest defaults to an older Xcode (16.4) whose Swift 6
+        # region-isolation checker flags borderline (but sound) sendability
+        # nondeterministically. The newest Xcode compiles the project cleanly.
+        run: |
+          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate project

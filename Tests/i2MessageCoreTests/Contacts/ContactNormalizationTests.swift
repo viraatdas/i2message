@@ -39,4 +39,23 @@ final class ContactNormalizationTests: XCTestCase {
         XCTAssertEqual(inferred.kind, .phoneNumber)
         XCTAssertEqual(inferred.normalizedValue, "5551234567")
     }
+
+    func testResolvedContactPrioritizesExactChatHandleAndService() {
+        let contact = Contact(
+            id: "contact.multi",
+            displayName: "Multi Number",
+            handles: [
+                ContactHandleNormalizer.contactHandle(value: "+1 415 555 0100", service: .unknown),
+                ContactHandleNormalizer.contactHandle(value: "+1 415 555 0200", service: .unknown)
+            ]
+        )
+
+        let prioritized = contact.prioritizing(
+            messageHandle: MessageHandle(value: "+1 (415) 555-0200", service: .sms)
+        )
+
+        XCTAssertEqual(prioritized.handles.first?.value, "+1 (415) 555-0200")
+        XCTAssertEqual(prioritized.handles.first?.service, .sms)
+        XCTAssertEqual(prioritized.handles.dropFirst().first?.normalizedValue, "4155550100")
+    }
 }

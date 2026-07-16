@@ -87,11 +87,9 @@ struct SearchOverlayView: View {
             .font(.title3)
             .focused($searchFocused)
             .onSubmit {
-                if let first = model.exactSearchResults.first {
-                    Task { await model.openSearchResult(first) }
-                } else if let snippet = model.semanticSnippets.first {
-                    Task { await model.openSemanticSnippet(snippet) }
-                }
+                debounceTask?.cancel()
+                debounceTask = nil
+                Task { await model.submitCurrentSearch() }
             }
 
             Button {

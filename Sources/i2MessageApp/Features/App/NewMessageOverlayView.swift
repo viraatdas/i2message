@@ -124,15 +124,11 @@ struct NewMessageOverlayView: View {
     }
 
     private func handleSubmit() {
+        debounceTask?.cancel()
+        debounceTask = nil
         let suggestions = model.newMessageSuggestions
-        if suggestions.indices.contains(selectedIndex) {
-            Task { await model.startConversation(with: suggestions[selectedIndex]) }
-        } else if let first = suggestions.first {
-            Task { await model.startConversation(with: first) }
-        } else {
-            let query = model.newMessageQuery
-            Task { await model.startConversation(withHandle: query) }
-        }
+        let selectedID = suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex].id : nil
+        Task { await model.submitNewMessage(selectedSuggestionID: selectedID) }
     }
 
     private func scheduleSuggestions(_ text: String) {

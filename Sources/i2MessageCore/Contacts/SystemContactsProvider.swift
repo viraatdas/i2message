@@ -58,13 +58,9 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
     public func contact(for handle: MessageHandle) async throws -> Contact {
         try Task.checkCancellation()
 
-        // On first run the status is `.notDetermined`; request access here so
-        // participant/sender resolution can surface real names instead of
-        // silently falling back to raw phone-number handles.
-        if CNContactStore.authorizationStatus(for: .contacts) == .notDetermined {
-            _ = try? await requestContactsAccess()
-        }
-
+        // Participant mapping runs while onboarding is visible. Do not trigger
+        // a surprise system prompt here; the explicit onboarding action owns
+        // the Contacts request.
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
             return try await fallbackResolver.contact(for: handle)
         }
@@ -73,7 +69,7 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
         let contactHandle = ContactHandleNormalizer.contactHandle(value: handle.value, service: handle.service)
 
         if let contact = contactsByNormalizedHandle[contactHandle.normalizedValue] {
-            return contact
+            return contact.prioritizing(messageHandle: handle)
         }
 
         return Contact.fallback(handle: contactHandle, handleRowID: handle.rowID, resolvedAt: now())

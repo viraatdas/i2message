@@ -131,7 +131,17 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
         // the result of the last preflight instead of reporting notDetermined
         // forever.
         if let cached = readCachedAppleEventsStatus() {
-            return cached
+            switch cached.state {
+            case .granted, .restricted, .unsupported:
+                return cached
+            case .denied:
+                // A user can grant Automation in System Settings while the app
+                // is running. Re-run the harmless preflight so didBecomeActive
+                // can recover without forcing a relaunch.
+                return (try? await requestAppleEvents()) ?? cached
+            case .notDetermined:
+                break
+            }
         }
 
         guard let automation else {
@@ -152,6 +162,12 @@ public final class MacOSPermissionManager: PermissionManaging, @unchecked Sendab
                 : "Messages.app could not be found.",
             lastCheckedAt: dateProvider()
         )
+    }
+
+    /// Internal seam used by regression tests without querying unrelated TCC
+    /// services from an XCTest host process.
+    func refreshedAppleEventsStatus() async -> PermissionStatus {
+        await appleEventsStatus()
     }
 
     private func requestAppleEvents() async throws -> PermissionStatus {

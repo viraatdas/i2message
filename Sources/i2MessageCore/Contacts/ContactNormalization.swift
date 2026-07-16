@@ -64,6 +64,21 @@ public enum ContactHandleNormalizer {
 }
 
 extension Contact {
+    /// Returns the address-book contact with the exact chat.db handle first.
+    /// This preserves which of several phone numbers belongs to an SMS thread
+    /// and carries its real service into Messages Automation.
+    func prioritizing(messageHandle: MessageHandle) -> Contact {
+        let preferred = ContactHandleNormalizer.contactHandle(
+            value: messageHandle.value,
+            service: messageHandle.service
+        )
+        var result = self
+        result.handles = [preferred] + handles.filter {
+            $0.normalizedValue != preferred.normalizedValue
+        }
+        return result
+    }
+
     public static func fallback(handle: ContactHandle, handleRowID: Int64? = nil, resolvedAt: Date = Date()) -> Contact {
         let idSeed = handleRowID.map { "handle:\($0)" } ?? "handle:\(handle.normalizedValue)"
         let displayName = handle.value.isEmpty ? handle.normalizedValue : handle.value

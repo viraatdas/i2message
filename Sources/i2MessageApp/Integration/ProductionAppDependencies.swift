@@ -49,7 +49,7 @@ extension AppDependencies {
 
         return AppDependencies(
             isLiveData: true,
-            seed: .rich,
+            seed: .empty,
             conversationRepository: dataStack.conversations,
             messageRepository: dataStack.messages,
             contactProvider: dataStack.contacts,

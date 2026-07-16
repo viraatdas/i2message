@@ -120,7 +120,7 @@ struct ContentView: View {
         // in System Settings (Full Disk Access, Contacts) is reflected on
         // return — in the onboarding setup page, the sidebar, and the banner.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.refreshPermissions() }
+            Task { await model.handleApplicationDidBecomeActive() }
         }
         .preferredColorScheme(model.settings.theme.colorScheme)
         .frame(minWidth: I2Layout.minWindowWidth, minHeight: I2Layout.minWindowHeight)

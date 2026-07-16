@@ -116,6 +116,16 @@ struct MockAppDataset: Sendable {
         messagesByConversation.values.flatMap { $0 }.sorted { $0.sentAt < $1.sentAt }
     }
 
+    /// Production starts empty and fails closed. Fixture people and phone
+    /// numbers must never appear in a live inbox where the real sender is
+    /// available.
+    static let empty = MockAppDataset(
+        currentUser: MockData.currentUser,
+        contacts: [],
+        conversations: [],
+        messagesByConversation: [:]
+    )
+
     static let rich: MockAppDataset = {
         let currentUser = MockData.currentUser
         let maya = MockData.contacts[1]

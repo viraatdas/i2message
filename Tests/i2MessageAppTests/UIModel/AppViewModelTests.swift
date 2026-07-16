@@ -130,6 +130,44 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.statusBanner?.tone, .success)
     }
 
+    func testLiveConversationFailureCannotSendFixtureRecipient() async {
+        var dependencies = AppDependencies.test()
+        let sender = SlowCountingMessageSender(delayNanoseconds: 0)
+        dependencies.isLiveData = true
+        dependencies.seed = .empty
+        dependencies.conversationRepository = ThrowingConversationRepository()
+        dependencies.messageSender = sender
+
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+        model.updateDraftText("must not leave this Mac")
+        await model.sendCurrentDraft()
+
+        XCTAssertTrue(model.conversations.isEmpty)
+        XCTAssertNil(model.selectedConversationID)
+        let sendCount = await sender.sentCount()
+        XCTAssertEqual(sendCount, 0)
+    }
+
+    func testConcurrentComposerSubmitsDraftExactlyOnce() async throws {
+        var dependencies = AppDependencies.test()
+        let sender = SlowCountingMessageSender(delayNanoseconds: 160_000_000)
+        dependencies.messageSender = sender
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+        model.updateDraftText("one send only")
+
+        let first = Task { await model.sendCurrentDraft() }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let second = Task { await model.sendCurrentDraft() }
+        await first.value
+        await second.value
+
+        let sendCount = await sender.sentCount()
+        XCTAssertEqual(sendCount, 1)
+        XCTAssertEqual(model.selectedMessages.filter { $0.body.plainText == "one send only" }.count, 1)
+    }
+
     func testMainComposerSendDoesNotCreateReplyAnchor() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
@@ -293,7 +331,21 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.selectedMessages.isEmpty)
     }
 
-    func testPendingConversationSendClearsStagingAndReloads() async throws {
+    func testNewMessageSubmitDoesNotUseStaleDefaultSuggestion() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+        model.openNewMessage()
+        let staleDefaultID = try XCTUnwrap(model.newMessageSuggestions.first?.id)
+
+        model.newMessageQuery = "+1 (650) 555-9999"
+        await model.submitNewMessage(selectedSuggestionID: staleDefaultID)
+
+        let pending = try XCTUnwrap(model.pendingNewConversation)
+        XCTAssertEqual(pending.handles.first?.value, "+1 (650) 555-9999")
+        XCTAssertEqual(pending.handles.first?.normalizedValue, "6505559999")
+    }
+
+    func testPendingConversationSendStaysOnPendingThreadUntilRealConversationAppears() async throws {
         let model = AppViewModel(dependencies: .test())
         await model.refreshEverything()
 
@@ -303,9 +355,9 @@ final class AppViewModelTests: XCTestCase {
         model.updateDraftText("First hello")
         await model.sendCurrentDraft()
 
-        XCTAssertNil(model.pendingNewConversation)
-        XCTAssertNotEqual(model.selectedConversationID, AppViewModel.pendingConversationID)
-        XCTAssertNil(model.transcriptPages[AppViewModel.pendingConversationID])
+        XCTAssertNotNil(model.pendingNewConversation)
+        XCTAssertEqual(model.selectedConversationID, AppViewModel.pendingConversationID)
+        XCTAssertEqual(model.selectedMessages.last?.body.plainText, "First hello")
     }
 
     func testReadingConversationKeepsUnreadClearedAcrossReload() async throws {
@@ -567,6 +619,56 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.currentDraftAttachments.count, before)
     }
 
+    func testSelectedAndDroppedAttachmentsKeepReadableFileURLs() async throws {
+        let model = AppViewModel(dependencies: .test())
+        await model.refreshEverything()
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("i2message-attachment-\(UUID().uuidString).txt")
+        let bytes = Data("attachment payload".utf8)
+        try bytes.write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        XCTAssertEqual(model.addDraftAttachments(fileURLs: [fileURL]), 1)
+        let attachment = try XCTUnwrap(model.currentDraftAttachments.last)
+        XCTAssertEqual(attachment.fileURL, fileURL.standardizedFileURL)
+        XCTAssertEqual(try Data(contentsOf: attachment.fileURL), bytes)
+
+        let missing = fileURL.deletingLastPathComponent().appendingPathComponent("missing-\(UUID().uuidString)")
+        XCTAssertEqual(model.addDraftAttachments(fileURLs: [missing]), 0)
+        XCTAssertEqual(model.currentDraftAttachments.count, 1)
+    }
+
+    func testSearchResultLoadsConversationOutsideRecentWorkingSet() async throws {
+        var dependencies = AppDependencies.test()
+        let hidden = try XCTUnwrap(dependencies.seed.conversations.last)
+        dependencies.conversationRepository = FilteringConversationRepository(
+            base: dependencies.conversationRepository,
+            hiddenID: hidden.id
+        )
+        dependencies.isLiveData = true
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+        XCTAssertFalse(model.conversations.contains { $0.id == hidden.id })
+
+        let targetMessage = try XCTUnwrap(dependencies.seed.messagesByConversation[hidden.id]?.last)
+        await model.openSearchResult(
+            SearchResult(
+                id: "older-hit",
+                kind: .message,
+                conversationID: hidden.id,
+                messageID: targetMessage.id,
+                title: hidden.title,
+                subtitle: "",
+                snippet: targetMessage.body.plainText,
+                score: 1
+            )
+        )
+
+        XCTAssertEqual(model.selectedConversation?.id, hidden.id)
+        XCTAssertTrue(model.conversations.contains { $0.id == hidden.id })
+        XCTAssertEqual(model.highlightedMessageID, targetMessage.id)
+    }
+
     private static func makeSamplePNGData() throws -> Data {
         let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -717,6 +819,98 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.dismissTopmostOverlay())
         XCTAssertFalse(model.isSettingsPresented)
     }
+}
+
+private struct ThrowingConversationRepository: ConversationRepository {
+    func conversations(page: PageRequest, filter: ConversationFilter) async throws -> Page<Conversation> {
+        throw I2MessageError.permissionDenied(.fullDiskAccess, reason: "test denied")
+    }
+
+    func conversation(id: ConversationID) async throws -> Conversation {
+        throw I2MessageError.notFound(resource: "Conversation", id: id.rawValue)
+    }
+
+    func observeConversations(filter: ConversationFilter) -> AsyncThrowingStream<[Conversation], Error> {
+        AsyncThrowingStream { continuation in
+            continuation.finish(throwing: I2MessageError.permissionDenied(.fullDiskAccess, reason: "test denied"))
+        }
+    }
+}
+
+private struct FilteringConversationRepository: ConversationRepository {
+    let base: any ConversationRepository
+    let hiddenID: ConversationID
+
+    func conversations(page: PageRequest, filter: ConversationFilter) async throws -> Page<Conversation> {
+        let page = try await base.conversations(page: page, filter: filter)
+        return Page(
+            items: page.items.filter { $0.id != hiddenID },
+            nextCursor: page.nextCursor,
+            previousCursor: page.previousCursor,
+            hasMore: page.hasMore,
+            totalCount: page.totalCount.map { max(0, $0 - 1) }
+        )
+    }
+
+    func conversation(id: ConversationID) async throws -> Conversation {
+        try await base.conversation(id: id)
+    }
+
+    func observeConversations(filter: ConversationFilter) -> AsyncThrowingStream<[Conversation], Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await conversations in base.observeConversations(filter: filter) {
+                        continuation.yield(conversations.filter { $0.id != hiddenID })
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+private actor SlowCountingMessageSender: MessageSending {
+    private let delayNanoseconds: UInt64
+    private var count = 0
+
+    init(delayNanoseconds: UInt64) {
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    func validate(_ draft: MessageDraft) async throws -> SendOperation {
+        SendOperation(
+            id: "slow-send",
+            draft: draft,
+            state: .validating,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+    }
+
+    func send(_ draft: MessageDraft) async throws -> SendReceipt {
+        count += 1
+        if delayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: delayNanoseconds)
+        }
+        let conversationID: ConversationID?
+        if case .existingConversation(let id) = draft.target {
+            conversationID = id
+        } else {
+            conversationID = nil
+        }
+        return SendReceipt(
+            operationID: "slow-send",
+            conversationID: conversationID,
+            messageID: nil,
+            sentAt: Date()
+        )
+    }
+
+    func sentCount() -> Int { count }
 }
 
 /// Wraps the fixture repository with a mutable overlay so tests can simulate

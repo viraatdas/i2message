@@ -74,6 +74,8 @@ final class AppViewModel: ObservableObject {
     @Published private var draftTexts: [ConversationID: String] = [:]
     @Published private var draftAttachments: [ConversationID: [DraftAttachment]] = [:]
     @Published private(set) var sendOperation: SendOperation?
+    @Published private(set) var isSendingCurrentDraft = false
+    @Published private(set) var isSendingThreadReply = false
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
     private var attachmentDescriptionTasks: [AttachmentID: Task<Void, Never>] = [:]
     private var attachmentDescriptionAccessOrder: [AttachmentID] = []
@@ -224,7 +226,8 @@ final class AppViewModel: ObservableObject {
     }
 
     var canSendCurrentDraft: Bool {
-        !currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !currentDraftAttachments.isEmpty
+        !isSendingCurrentDraft
+            && (!currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !currentDraftAttachments.isEmpty)
     }
 
     var searchResultCountLabel: String {
@@ -296,11 +299,11 @@ final class AppViewModel: ObservableObject {
     func loadConversations() async {
         conversationPhase = .loading
         do {
-            // Live mode intentionally loads only the most recent conversations
-            // for now; older threads stay reachable through search.
+            // Keep a useful recent working set while older threads remain
+            // reachable through exact search and direct repository lookup.
             let page = try await dependencies.conversationRepository.conversations(
-                page: PageRequest(limit: dependencies.isLiveData ? 10 : 200),
-                filter: ConversationFilter(includeArchived: true)
+                page: PageRequest(limit: dependencies.isLiveData ? 80 : 200),
+                filter: ConversationFilter(includeArchived: false)
             )
             conversations = page.items.sorted(by: MockAppDataset.conversationSort)
             applyLocalUnreadOverrides()
@@ -325,10 +328,23 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadContacts() async {
+        if dependencies.isLiveData,
+           permissionSnapshot.status(for: .contacts)?.state != .granted {
+            contacts = []
+            selectedContactID = nil
+            contactPhase = .empty
+            return
+        }
+
         contactPhase = .loading
         do {
             let page = try await dependencies.contactProvider.contacts(matching: "", page: PageRequest(limit: 200))
             contacts = page.items
+            if let selectedContactID, !contacts.contains(where: { $0.id == selectedContactID }) {
+                self.selectedContactID = contacts.first?.id
+            } else if selectedContactID == nil {
+                selectedContactID = contacts.first?.id
+            }
             contactPhase = contacts.isEmpty ? .empty : .loaded
         } catch {
             contactPhase = .failed(error.localizedDescription)
@@ -350,6 +366,11 @@ final class AppViewModel: ObservableObject {
         // must not land after the user has already moved on, or it clobbers the
         // now-selected chat's state and stalls the switch.
         selectionLoadTask?.cancel()
+        if !conversations.contains(where: { $0.id == id }),
+           let resolved = try? await dependencies.conversationRepository.conversation(id: id) {
+            conversations.append(resolved)
+            conversations.sort(by: MockAppDataset.conversationSort)
+        }
         selectedConversationID = id
         markConversationRead(id)
         touchTranscriptPage(id)
@@ -568,6 +589,28 @@ final class AppViewModel: ObservableObject {
             .map { $0 }
     }
 
+    /// Resolves Return against suggestions for the text that is on screen now,
+    /// not the previous debounce result. This prevents a quickly typed raw
+    /// address from accidentally selecting a stale default contact.
+    func submitNewMessage(selectedSuggestionID: ContactID?) async {
+        let submittedQuery = newMessageQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !submittedQuery.isEmpty else { return }
+
+        await updateNewMessageQuery(submittedQuery)
+        guard newMessageQuery.trimmingCharacters(in: .whitespacesAndNewlines) == submittedQuery else {
+            return
+        }
+
+        let selected = selectedSuggestionID.flatMap { id in
+            newMessageSuggestions.first { $0.id == id }
+        }
+        if let contact = selected ?? newMessageSuggestions.first {
+            await startConversation(with: contact)
+        } else {
+            await startConversation(withHandle: submittedQuery)
+        }
+    }
+
     private func defaultRecipientSuggestions() -> [Contact] {
         Array(filteredContacts.prefix(8))
     }
@@ -601,10 +644,11 @@ final class AppViewModel: ObservableObject {
         closeNewMessage()
 
         let isEmail = trimmed.contains("@")
+        let kind: ContactHandleKind = isEmail ? .emailAddress : .phoneNumber
         let handle = ContactHandle(
             value: trimmed,
-            normalizedValue: trimmed.lowercased(),
-            kind: isEmail ? .emailAddress : .phoneNumber,
+            normalizedValue: ContactHandleNormalizer.normalizedValue(trimmed, kind: kind),
+            kind: kind,
             service: isEmail ? .iMessage : .unknown
         )
         stagePendingConversation(title: trimmed, participants: [], handles: [handle])
@@ -1029,37 +1073,34 @@ final class AppViewModel: ObservableObject {
         threadDraftText.append(emoji)
     }
 
-    func addMockAttachment() {
-        guard let selectedConversationID else {
-            return
+    @discardableResult
+    func addDraftAttachments(fileURLs: [URL]) -> Int {
+        guard let selectedConversationID else { return 0 }
+
+        let readableFiles = fileURLs.filter { url in
+            url.isFileURL && FileManager.default.fileExists(atPath: url.path)
         }
+        guard !readableFiles.isEmpty else { return 0 }
+
         var attachments = draftAttachments[selectedConversationID, default: []]
-        attachments.append(
-            DraftAttachment(
-                id: AttachmentID(rawValue: "draft.\(UUID().uuidString)"),
-                fileURL: URL(fileURLWithPath: "/tmp/i2message-mock-attachment.txt"),
-                filename: "Mock Attachment.txt",
-                uniformTypeIdentifier: "public.plain-text"
+        let existingURLs = Set(attachments.map(\.fileURL.standardizedFileURL))
+        let additions = readableFiles.compactMap { fileURL -> DraftAttachment? in
+            let standardized = fileURL.standardizedFileURL
+            guard !existingURLs.contains(standardized) else { return nil }
+            let contentType = try? standardized.resourceValues(forKeys: [.contentTypeKey]).contentType
+            return DraftAttachment(
+                id: AttachmentID(rawValue: "draft.file.\(UUID().uuidString)"),
+                fileURL: standardized,
+                filename: standardized.lastPathComponent,
+                uniformTypeIdentifier: contentType?.identifier
             )
-        )
+        }
+        guard !additions.isEmpty else { return 0 }
+
+        attachments.append(contentsOf: additions)
         draftAttachments[selectedConversationID] = attachments
         focusRequest = .composer
-    }
-
-    func addDroppedAttachment(filename: String) {
-        guard let selectedConversationID else {
-            return
-        }
-        var attachments = draftAttachments[selectedConversationID, default: []]
-        attachments.append(
-            DraftAttachment(
-                id: AttachmentID(rawValue: "draft.drop.\(UUID().uuidString)"),
-                fileURL: URL(fileURLWithPath: "/tmp/\(filename)"),
-                filename: filename,
-                uniformTypeIdentifier: nil
-            )
-        )
-        draftAttachments[selectedConversationID] = attachments
+        return additions.count
     }
 
     /// Reads image content from `pasteboard`, writes each image's bytes to a
@@ -1325,11 +1366,29 @@ final class AppViewModel: ObservableObject {
         return nil
     }
 
+    private func conversation(matching handles: [ContactHandle], in candidates: [Conversation]? = nil) -> Conversation? {
+        let requested = Set(handles.map { ContactHandleNormalizer.normalizedValue($0.value, kind: $0.kind) })
+        guard !requested.isEmpty else { return nil }
+        return (candidates ?? conversations).first { conversation in
+            guard conversation.kind != .group else { return false }
+            let participantHandles = Set(
+                conversation.participants
+                    .filter { !$0.isCurrentUser }
+                    .flatMap(\.handles)
+                    .map { ContactHandleNormalizer.normalizedValue($0.value, kind: $0.kind) }
+            )
+            return !requested.isDisjoint(with: participantHandles)
+        }
+    }
+
     func sendCurrentDraft() async {
-        guard let selectedConversationID else {
+        guard !isSendingCurrentDraft, let selectedConversationID else {
             return
         }
+        isSendingCurrentDraft = true
+        defer { isSendingCurrentDraft = false }
         let isPending = pendingNewConversation?.conversation.id == selectedConversationID
+        let pendingHandles = pendingNewConversation?.handles ?? []
 
         // Main composer sends are always normal conversation messages. Thread
         // replies are created only by the docked thread panel.
@@ -1364,19 +1423,34 @@ final class AppViewModel: ObservableObject {
             sendOperation = try await dependencies.messageSender.validate(sendableDraft)
             let receipt = try await dependencies.messageSender.send(sendableDraft)
             AppDiagnostics.operation("send_message", state: "accepted")
-            if !isPending {
-                appendSentMessage(receipt: receipt, draft: draft)
-            }
+            let localEchoDraft = isPending
+                ? MessageDraft(
+                    target: .existingConversation(Self.pendingConversationID),
+                    text: draft.text,
+                    attachments: draft.attachments,
+                    requestedService: draft.requestedService
+                )
+                : draft
+            appendSentMessage(receipt: receipt, draft: localEchoDraft)
             draftTexts[selectedConversationID] = ""
             draftAttachments[selectedConversationID] = []
             sendOperation = nil
             try? await dependencies.searchIndexer.invalidateIndex(for: selectedConversationID)
             if isPending {
-                pendingNewConversation = nil
-                transcriptPages[Self.pendingConversationID] = nil
                 await loadConversations()
-                if let realID = receipt.conversationID ?? conversations.first?.id {
-                    await selectConversation(realID)
+                let resolvedID = receipt.conversationID ?? conversation(matching: pendingHandles)?.id
+                if let resolvedID {
+                    pendingNewConversation = nil
+                    transcriptPages[Self.pendingConversationID] = nil
+                    draftTexts[Self.pendingConversationID] = nil
+                    draftAttachments[Self.pendingConversationID] = nil
+                    await selectConversation(resolvedID)
+                } else if dependencies.isLiveData {
+                    showBanner(
+                        tone: .success,
+                        title: "Message sent",
+                        message: "Waiting for the new conversation to appear in Messages."
+                    )
                 }
             } else if dependencies.isLiveData {
                 scheduleTranscriptReload()
@@ -1474,6 +1548,18 @@ final class AppViewModel: ObservableObject {
         await performSearch(reset: false)
     }
 
+    func submitCurrentSearch() async {
+        let submittedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !submittedQuery.isEmpty else { return }
+        await performSearch(reset: true)
+        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == submittedQuery else { return }
+        if let first = exactSearchResults.first {
+            await openSearchResult(first)
+        } else if let snippet = semanticSnippets.first {
+            await openSemanticSnippet(snippet)
+        }
+    }
+
     /// Contacts matching the current query, shown as their own section in the
     /// global (⌘⇧P) search overlay. Empty when the search is scoped to one chat.
     private func updateSearchContactMatches(_ query: String) async {
@@ -1539,11 +1625,50 @@ final class AppViewModel: ObservableObject {
             ?? .conservativeDefault(checkedAt: Date())
     }
 
+    /// Rehydrates providers after grants made in System Settings. Permission
+    /// badges alone are not enough: Contacts and Messages data that failed on
+    /// first launch must be loaded again without requiring an app restart.
+    func handleApplicationDidBecomeActive() async {
+        let previous = permissionSnapshot
+        await refreshPermissions()
+
+        let fullDiskBecameAvailable = previous.status(for: .fullDiskAccess)?.state != .granted
+            && permissionSnapshot.status(for: .fullDiskAccess)?.state == .granted
+        let contactsBecameAvailable = previous.status(for: .contacts)?.state != .granted
+            && permissionSnapshot.status(for: .contacts)?.state == .granted
+
+        if fullDiskBecameAvailable || contactsBecameAvailable {
+            await loadConversations()
+            await loadContacts()
+            if selectedConversationID == nil {
+                selectedConversationID = conversations.first?.id
+            }
+            await loadSelectedConversation(reset: true)
+        }
+    }
+
     func requestPermission(_ permission: AppPermission) async {
         do {
-            _ = try await dependencies.permissionManager.request(permission)
+            let status = try await dependencies.permissionManager.request(permission)
             await refreshPermissions()
-            showBanner(tone: .success, title: "Permission updated", message: "\(permission.displayName) status refreshed.")
+            if status.state == .granted {
+                if permission == .contacts || permission == .fullDiskAccess {
+                    await loadConversations()
+                    await loadContacts()
+                    if selectedConversationID == nil {
+                        selectedConversationID = conversations.first?.id
+                    }
+                    await loadSelectedConversation(reset: true)
+                }
+                showBanner(tone: .success, title: "Permission updated", message: "\(permission.displayName) is available.")
+            } else {
+                showBanner(
+                    tone: .warning,
+                    title: "Permission still needed",
+                    message: status.reason ?? "Allow \(permission.displayName) in System Settings, then return to i2Message.",
+                    actionTitle: "Open Settings"
+                )
+            }
         } catch {
             showBanner(tone: .error, title: "Permission request failed", message: userFacingMessage(for: error), actionTitle: "Open Settings")
         }
@@ -1606,7 +1731,20 @@ final class AppViewModel: ObservableObject {
     }
 
     func openSearchOverlay(scopedToCurrentConversation: Bool) {
-        searchConversationScope = scopedToCurrentConversation ? selectedConversationID : nil
+        let nextScope = scopedToCurrentConversation ? selectedConversationID : nil
+        if searchConversationScope != nextScope {
+            searchConversationScope = nextScope
+            exactSearchResults = []
+            semanticSnippets = []
+            searchContactMatches = []
+            searchHasMore = false
+            searchTotalCount = nil
+            searchPageCursor = nil
+            searchPhase = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .idle : .loading
+            if searchPhase == .loading {
+                Task { await performSearch(reset: true) }
+            }
+        }
         isSearchOverlayPresented = true
         isCommandPalettePresented = false
         focusRequest = .searchField
@@ -1665,12 +1803,17 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
+            if !currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !currentDraftAttachments.isEmpty {
+                _ = try await actions.preparePasteHandoff(
+                    PasteHandoffRequest(text: currentDraftText, attachments: currentDraftAttachments)
+                )
+            }
             let result = try await actions.openConversation(
                 ConversationHandoffRequest(
                     conversationID: conversation.id,
                     displayTitle: conversation.title,
-                    handles: conversation.participants.flatMap(\.handles),
-                    draftText: currentDraftText
+                    handles: conversation.participants.flatMap(\.handles)
                 )
             )
             showBanner(tone: .success, title: "Opened Messages", message: result.userMessage)
@@ -1907,20 +2050,23 @@ final class AppViewModel: ObservableObject {
     }
 
     var canSendThreadReply: Bool {
-        threadRootID != nil
+        !isSendingThreadReply
+            && threadRootID != nil
             && !threadDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Sends a reply into the open thread (root as the reply target) and keeps
     /// the composer inside the pane so the conversation stays threaded.
     func sendThreadReply() async {
-        guard let selectedConversationID,
+        guard !isSendingThreadReply,
+              let selectedConversationID,
               let rootID = threadRootID,
               canSendThreadReply else {
             return
         }
-        // Local echo carries the reply anchor so the pane threads it; the actual
-        // send resolves a real handle (1:1) and drops the anchor.
+        isSendingThreadReply = true
+        defer { isSendingThreadReply = false }
+
         let draft = MessageDraft(
             target: .existingConversation(selectedConversationID),
             text: threadDraftText,
@@ -1928,6 +2074,23 @@ final class AppViewModel: ObservableObject {
             replyToMessageID: rootID,
             requestedService: selectedConversation?.service
         )
+
+        // Messages AppleScript cannot create an anchored reply. Never send a
+        // normal message and fabricate a threaded local echo; preserve the
+        // draft and hand the user to Messages for the real reply action.
+        if dependencies.isLiveData {
+            if await handoffDraftForManualSend(draft: draft) {
+                threadDraftText = ""
+            } else {
+                showBanner(
+                    tone: .error,
+                    title: "Could not open Messages",
+                    message: "Thread replies must be completed in Messages.app."
+                )
+            }
+            return
+        }
+
         let sendableDraft = MessageDraft(
             target: directAutomationTarget(for: selectedConversationID) ?? .existingConversation(selectedConversationID),
             text: threadDraftText,
@@ -2095,21 +2258,27 @@ final class AppViewModel: ObservableObject {
         observationTask = Task { [weak self] in
             do {
                 let isLive = self?.dependencies.isLiveData ?? false
-                for try await nextConversations in repository.observeConversations(filter: ConversationFilter(includeArchived: true)) {
+                for try await nextConversations in repository.observeConversations(filter: ConversationFilter(includeArchived: false)) {
                     try Task.checkCancellation()
                     var sorted = nextConversations.sorted(by: MockAppDataset.conversationSort)
-                    if isLive {
-                        sorted = Array(sorted.prefix(10))
-                    }
+                    if isLive { sorted = Array(sorted.prefix(80)) }
                     await MainActor.run { [weak self] in
                         guard let self else { return }
+                        if let selectedConversationID = self.selectedConversationID,
+                           !sorted.contains(where: { $0.id == selectedConversationID }),
+                           let selected = self.conversations.first(where: { $0.id == selectedConversationID }) {
+                            sorted.append(selected)
+                        }
                         self.conversations = sorted
                         self.applyLocalUnreadOverrides()
                         self.applyLocalReadOverrides()
-                        if let selectedConversationID = self.selectedConversationID,
-                           !sorted.contains(where: { $0.id == selectedConversationID }) {
-                            self.selectedConversationID = sorted.first?.id
-                            self.highlightedMessageID = nil
+                        if let pending = self.pendingNewConversation,
+                           let resolved = self.conversation(matching: pending.handles, in: sorted) {
+                            self.pendingNewConversation = nil
+                            self.transcriptPages[Self.pendingConversationID] = nil
+                            self.draftTexts[Self.pendingConversationID] = nil
+                            self.draftAttachments[Self.pendingConversationID] = nil
+                            self.selectedConversationID = resolved.id
                         }
                     }
                     await self?.refreshSelectedTranscriptTail()
@@ -2370,11 +2539,25 @@ final class AppViewModel: ObservableObject {
     }
 
     private func handoffDraftForManualSend(draft: MessageDraft) async -> Bool {
-        guard let actions = dependencies.messagingActions,
-              case .existingConversation(let conversationID) = draft.target,
-              let conversation = conversations.first(where: { $0.id == conversationID })
-        else {
-            return false
+        guard let actions = dependencies.messagingActions else { return false }
+
+        let conversationID: ConversationID?
+        let displayTitle: String?
+        let handles: [ContactHandle]
+        switch draft.target {
+        case .existingConversation(let id):
+            let conversation = conversations.first(where: { $0.id == id }) ?? selectedConversation
+            conversationID = id
+            displayTitle = conversation?.title
+            handles = conversation?.participants.flatMap(\.handles) ?? []
+        case .handles(let targetHandles):
+            conversationID = nil
+            displayTitle = pendingNewConversation?.conversation.title
+            handles = targetHandles
+        case .existingChat:
+            conversationID = selectedConversation?.id
+            displayTitle = selectedConversation?.title
+            handles = selectedConversation?.participants.flatMap(\.handles) ?? []
         }
 
         do {
@@ -2383,10 +2566,9 @@ final class AppViewModel: ObservableObject {
             )
             _ = try await actions.openConversation(
                 ConversationHandoffRequest(
-                    conversationID: conversation.id,
-                    displayTitle: conversation.title,
-                    handles: conversation.participants.flatMap(\.handles),
-                    draftText: draft.text
+                    conversationID: conversationID,
+                    displayTitle: displayTitle,
+                    handles: handles
                 )
             )
             showBanner(

@@ -14,11 +14,7 @@ public final class MacOSMessagesHandoffController: MessagesHandoffControlling, @
     }
 
     public func openMessages(with request: ConversationHandoffRequest) async throws {
-        if !request.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !request.handles.isEmpty {
-            let handoffText = handoffSummary(for: request)
-            try await copyToPasteboard(PasteHandoffRequest(text: handoffText))
-        }
-
+        _ = request
         try await automation.openMessages()
     }
 
@@ -97,24 +93,6 @@ public final class MacOSMessagesHandoffController: MessagesHandoffControlling, @
         }
 
         return items
-    }
-
-    private func handoffSummary(for request: ConversationHandoffRequest) -> String {
-        var parts: [String] = []
-        if let displayTitle = request.displayTitle, !displayTitle.isEmpty {
-            parts.append(displayTitle)
-        }
-
-        let handles = request.handles.map(\.value).filter { !$0.isEmpty }
-        if !handles.isEmpty {
-            parts.append(handles.joined(separator: ", "))
-        }
-
-        if !request.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append(request.draftText)
-        }
-
-        return parts.joined(separator: "\n")
     }
 
     private func applicationURL(bundleIdentifier: String) async -> URL? {

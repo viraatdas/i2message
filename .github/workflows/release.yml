@@ -39,6 +39,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Use newest available Xcode
+        # Pin to the newest installed Xcode so the Swift 6 build is deterministic
+        # (macos-latest's default 16.4 flags borderline sendability variably).
+        run: |
+          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
+          xcodebuild -version
+
       - name: Install XcodeGen
         run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
 

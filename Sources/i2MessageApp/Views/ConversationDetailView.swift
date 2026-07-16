@@ -973,6 +973,7 @@ private struct ComposerView: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var composerFocused = false
     @State private var isDropTargeted = false
+    @State private var isFileImporterPresented = false
     @State private var measuredTextHeight: CGFloat = 36
 
     let conversation: Conversation
@@ -998,7 +999,7 @@ private struct ComposerView: View {
 
             HStack(alignment: .bottom, spacing: 9) {
                 Button {
-                    model.addMockAttachment()
+                    isFileImporterPresented = true
                 } label: {
                     Label("Attach", systemImage: "paperclip")
                 }
@@ -1068,11 +1069,10 @@ private struct ComposerView: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(isDropTargeted ? Color.accentColor : I2Palette.separator, lineWidth: 1)
                 }
-                .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
-                    if !providers.isEmpty {
-                        model.addDroppedAttachment(filename: "Dropped File")
-                    }
-                    return !providers.isEmpty
+                .dropDestination(for: URL.self) { urls, _ in
+                    model.addDraftAttachments(fileURLs: urls) > 0
+                } isTargeted: { targeted in
+                    isDropTargeted = targeted
                 }
 
                 Button {
@@ -1092,6 +1092,15 @@ private struct ComposerView: View {
         .frame(maxWidth: I2Layout.composerMaxWidth)
         .frame(maxWidth: .infinity, alignment: .center)
         .background(I2Palette.appBackground)
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result {
+                _ = model.addDraftAttachments(fileURLs: urls)
+            }
+        }
         .onChange(of: model.focusRequest) { _, request in
             guard request == .composer else { return }
             composerFocused = true
