@@ -1644,6 +1644,7 @@ final class AppViewModel: ObservableObject {
                 selectedConversationID = conversations.first?.id
             }
             await loadSelectedConversation(reset: true)
+            restartBackgroundIndexingAfterPermissionChange()
         }
     }
 
@@ -1659,6 +1660,7 @@ final class AppViewModel: ObservableObject {
                         selectedConversationID = conversations.first?.id
                     }
                     await loadSelectedConversation(reset: true)
+                    restartBackgroundIndexingAfterPermissionChange()
                 }
                 showBanner(tone: .success, title: "Permission updated", message: "\(permission.displayName) is available.")
             } else {
@@ -2333,6 +2335,14 @@ final class AppViewModel: ObservableObject {
             initialMessage: "Indexing in background",
             completionBanner: false
         )
+    }
+
+    /// Contacts and Full Disk Access can become available after startup. Any
+    /// in-flight pass may have captured fallback handles or an unreadable
+    /// corpus, so restart it immediately with the newly available providers.
+    private func restartBackgroundIndexingAfterPermissionChange() {
+        cancelIndexingTask(message: "Refreshing index metadata")
+        startBackgroundIndexingIfNeeded()
     }
 
     private func cancelIndexingTask(message: String) {

@@ -776,6 +776,21 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(counts.completed, 1)
     }
 
+    func testContactsPermissionGrantRestartsSearchMetadataIndexing() async {
+        var dependencies = AppDependencies.test()
+        let indexer = CancellableSearchIndexer()
+        dependencies.searchIndexer = indexer
+
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+        await model.requestPermission(.contacts)
+        await indexer.waitForStarts(1)
+
+        let counts = await indexer.counts()
+        XCTAssertGreaterThanOrEqual(counts.started, 1)
+        XCTAssertTrue(model.indexingProgress.isIndexing)
+    }
+
     func testCommandPaletteFiltersAndRunsCommands() async {
         let model = AppViewModel(dependencies: .test())
 

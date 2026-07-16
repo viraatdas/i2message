@@ -80,6 +80,32 @@ final class SearchCorpusStreamingTests: XCTestCase {
         XCTAssertEqual(page.items.first?.messageID, newMessage.id)
     }
 
+    func testConversationMetadataChangeRefreshesExistingMessageDocuments() async throws {
+        let provider = RecordingCorpusProvider(corpus: SearchTestFixtures.focusedCorpus())
+        let service = LocalSearchService(
+            indexURL: Self.temporaryIndexURL(),
+            corpusProvider: provider,
+            embedder: HashingSemanticEmbedder(dimension: 96),
+            indexingBatchSize: 100,
+            semanticCandidateLimit: 50_000
+        )
+
+        try await service.rebuildExactIndex { _ in }
+
+        let query = ExactSearchQuery(text: "notes inside long histories")
+        let before = try await service.exactSearch(query, page: PageRequest(limit: 10))
+        let messageID: MessageID = "message.design.1"
+        XCTAssertEqual(before.items.first { $0.messageID == messageID }?.title, "Design review")
+
+        provider.renameConversation("conversation.design", to: "Maya Chen")
+        provider.resetRecording()
+        try await service.rebuildExactIndex { _ in }
+
+        XCTAssertEqual(provider.streamedConversationIDs, ["conversation.design"])
+        let after = try await service.exactSearch(query, page: PageRequest(limit: 10))
+        XCTAssertEqual(after.items.first { $0.messageID == messageID }?.title, "Maya Chen")
+    }
+
     func testInterruptedRebuildResumesWithoutRestreamingFinishedConversations() async throws {
         let provider = RecordingCorpusProvider(corpus: SearchTestFixtures.focusedCorpus())
         let service = LocalSearchService(
@@ -175,6 +201,14 @@ private final class RecordingCorpusProvider: SearchIndexCorpusProviding, @unchec
                 sentAt: message.sentAt,
                 hasAttachments: false
             )
+        }
+    }
+
+    func renameConversation(_ conversationID: ConversationID, to title: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let index = corpus.conversations.firstIndex(where: { $0.id == conversationID }) {
+            corpus.conversations[index].title = title
         }
     }
 

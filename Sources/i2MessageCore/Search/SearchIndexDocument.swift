@@ -237,6 +237,12 @@ struct SearchIndexDocument: Hashable, Sendable {
 }
 
 enum SearchDocumentBuilder {
+    /// Bump whenever the persisted document fingerprint changes. Including the
+    /// version in conversation signatures makes the next rebuild stream every
+    /// conversation once instead of trusting signatures written by an older
+    /// document format.
+    private static let documentSchemaVersion = "2"
+
     static func documents(from corpus: SearchIndexCorpus) -> [SearchIndexDocument] {
         let conversationsByID = Dictionary(corpus.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let contactsByID = Dictionary(corpus.contacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -300,9 +306,10 @@ enum SearchDocumentBuilder {
     /// again (or via `invalidateIndex`).
     static func conversationSignature(_ conversation: Conversation) -> String {
         let components = [
+            documentSchemaVersion,
             conversation.id.rawValue,
             conversation.title,
-            conversation.participants.map(\.displayName).joined(separator: ","),
+            conversation.participants.map(participantSignature).joined(separator: ","),
             conversation.service.rawValue,
             String(conversation.updatedAt.timeIntervalSince1970),
             conversation.lastMessage?.messageID?.rawValue ?? "",
@@ -319,7 +326,7 @@ enum SearchDocumentBuilder {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
-        return SearchIndexDocument(
+        return document(
             id: documentID(for: conversation.id),
             kind: .conversation,
             conversationID: conversation.id,
@@ -331,8 +338,7 @@ enum SearchDocumentBuilder {
             body: body,
             service: conversation.service,
             senderID: nil,
-            date: conversation.updatedAt,
-            hash: StableHash.digest(body)
+            date: conversation.updatedAt
         )
     }
 
@@ -344,7 +350,7 @@ enum SearchDocumentBuilder {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
-        return SearchIndexDocument(
+        return document(
             id: "contact:\(contact.id.rawValue)",
             kind: .contact,
             conversationID: nil,
@@ -356,8 +362,7 @@ enum SearchDocumentBuilder {
             body: body,
             service: contact.handles.first?.service,
             senderID: contact.id,
-            date: contact.lastResolvedAt,
-            hash: StableHash.digest(body)
+            date: contact.lastResolvedAt
         )
     }
 
@@ -376,7 +381,7 @@ enum SearchDocumentBuilder {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
-        return SearchIndexDocument(
+        return document(
             id: "message:\(message.id.rawValue)",
             kind: .message,
             conversationID: message.conversationID,
@@ -388,8 +393,7 @@ enum SearchDocumentBuilder {
             body: body,
             service: message.service,
             senderID: message.senderID,
-            date: message.sentAt,
-            hash: StableHash.digest(body)
+            date: message.sentAt
         )
     }
 
@@ -407,7 +411,7 @@ enum SearchDocumentBuilder {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
 
-        return SearchIndexDocument(
+        return document(
             id: "attachment:\(attachment.id.rawValue)",
             kind: .attachment,
             conversationID: message.conversationID,
@@ -419,9 +423,67 @@ enum SearchDocumentBuilder {
             body: body,
             service: message.service,
             senderID: message.senderID,
-            date: message.sentAt,
-            hash: StableHash.digest(body)
+            date: message.sentAt
         )
+    }
+
+    /// The fingerprint covers every persisted field that affects display,
+    /// filtering, exact search, or semantic text. Previously message hashes
+    /// covered only their body, so a Contacts permission change could refresh
+    /// a conversation title while leaving every message hit labeled with the
+    /// old raw phone number indefinitely.
+    private static func document(
+        id: String,
+        kind: SearchResultKind,
+        conversationID: ConversationID?,
+        messageID: MessageID?,
+        contactID: ContactID?,
+        attachmentID: AttachmentID?,
+        title: String,
+        subtitle: String,
+        body: String,
+        service: MessageService?,
+        senderID: ContactID?,
+        date: Date?
+    ) -> SearchIndexDocument {
+        let fingerprint = [
+            documentSchemaVersion,
+            id,
+            kind.rawValue,
+            conversationID?.rawValue ?? "",
+            messageID?.rawValue ?? "",
+            contactID?.rawValue ?? "",
+            attachmentID?.rawValue ?? "",
+            title,
+            subtitle,
+            body,
+            service?.rawValue ?? "",
+            senderID?.rawValue ?? "",
+            date.map { String($0.timeIntervalSince1970) } ?? ""
+        ].joined(separator: "\u{1f}")
+
+        return SearchIndexDocument(
+            id: id,
+            kind: kind,
+            conversationID: conversationID,
+            messageID: messageID,
+            contactID: contactID,
+            attachmentID: attachmentID,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            service: service,
+            senderID: senderID,
+            date: date,
+            hash: StableHash.digest(fingerprint)
+        )
+    }
+
+    private static func participantSignature(_ contact: Contact) -> String {
+        let handles = contact.handles.map {
+            [$0.normalizedValue, $0.service.rawValue].joined(separator: ":")
+        }.joined(separator: ",")
+        return [contact.id.rawValue, contact.displayName, handles].joined(separator: ":")
     }
 }
 
