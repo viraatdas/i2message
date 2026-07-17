@@ -81,7 +81,9 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var attachmentDescriptions: [AttachmentID: String] = [:]
     private var attachmentDescriptionTasks: [AttachmentID: Task<Void, Never>] = [:]
     private var attachmentDescriptionAccessOrder: [AttachmentID] = []
-    @Published private(set) var contactThumbnails: [ContactID: Data] = [:]
+    /// Decoded once when loaded. Keeping image data here made every SwiftUI
+    /// body refresh construct and decode a new NSImage for each visible avatar.
+    @Published private(set) var contactThumbnails: [ContactID: NSImage] = [:]
     private var contactThumbnailTasks: [ContactID: Task<Void, Never>] = [:]
     private var contactThumbnailMisses: Set<ContactID> = []
     private var contactThumbnailAccessOrder: [ContactID] = []
@@ -92,6 +94,8 @@ final class AppViewModel: ObservableObject {
     private var indexingTask: Task<Void, Never>?
     private var backgroundIndexingDebounceTask: Task<Void, Never>?
     private var indexingTaskGeneration = 0
+    private var displayedExactIndexProgressBucket = -1
+    private var displayedSemanticIndexProgressBucket = -1
     private var transcriptReloadTask: Task<Void, Never>?
     private var transcriptReloadSequence = 0
     private var selectionLoadTask: Task<Void, Never>?
@@ -2314,6 +2318,16 @@ final class AppViewModel: ObservableObject {
             ?? dependencies.seed.contacts.first { $0.id == id }
     }
 
+    /// Outgoing chat.db rows intentionally have no sender handle. Resolve that
+    /// valid case to the current user so reply chips can show the Me-card photo
+    /// instead of presenting the sender as unknown.
+    func contact(for message: Message) -> Contact? {
+        if message.direction == .outgoing {
+            return dependencies.seed.currentUser
+        }
+        return contact(for: message.senderID)
+    }
+
     func requestContactThumbnail(for contact: Contact?) {
         guard let contact,
               contactThumbnails[contact.id] == nil,
@@ -2325,7 +2339,12 @@ final class AppViewModel: ObservableObject {
         }
         contactThumbnailTasks[contact.id] = Task { [weak self] in
             do {
-                let data = try await photoProvider.thumbnailData(for: contact.id)
+                let data: Data?
+                if contact.isCurrentUser {
+                    data = try await photoProvider.currentUserThumbnailData()
+                } else {
+                    data = try await photoProvider.thumbnailData(for: contact.id)
+                }
                 guard let self else { return }
                 self.contactThumbnailTasks[contact.id] = nil
                 guard !Task.isCancelled else { return }
@@ -2361,7 +2380,11 @@ final class AppViewModel: ObservableObject {
     }
 
     private func rememberContactThumbnail(_ data: Data, for id: ContactID) {
-        contactThumbnails[id] = data
+        guard let image = NSImage(data: data) else {
+            rememberMissingContactThumbnail(for: id)
+            return
+        }
+        contactThumbnails[id] = image
         contactThumbnailMisses.remove(id)
         touchContactThumbnailCacheEntry(id)
         trimContactThumbnailCacheIfNeeded()
@@ -2542,8 +2565,10 @@ final class AppViewModel: ObservableObject {
         let generation = indexingTaskGeneration
         let indexer = dependencies.searchIndexer
         let lastIndexedAt = indexingProgress.lastIndexedAt
+        displayedExactIndexProgressBucket = -1
+        displayedSemanticIndexProgressBucket = -1
 
-        let task = Task { [weak self] in
+        let task = Task(priority: .background) { [weak self] in
             await MainActor.run { [weak self] in
                 guard let self, self.indexingTaskGeneration == generation else { return }
                 self.indexingProgress = IndexingProgress(
@@ -2564,6 +2589,9 @@ final class AppViewModel: ObservableObject {
                     try await indexer.rebuildExactIndex { [weak self] fraction in
                         Task { @MainActor [weak self] in
                             guard let self, self.indexingTaskGeneration == generation else { return }
+                            let bucket = min(20, max(0, Int(fraction * 20)))
+                            guard bucket != self.displayedExactIndexProgressBucket else { return }
+                            self.displayedExactIndexProgressBucket = bucket
                             self.indexingProgress.exactProgress = fraction
                             self.indexingProgress.message = fraction < 1
                                 ? "Indexing messages (\(Int(fraction * 100))%)"
@@ -2582,6 +2610,9 @@ final class AppViewModel: ObservableObject {
                     try await indexer.rebuildSemanticIndex { [weak self] fraction in
                         Task { @MainActor [weak self] in
                             guard let self, self.indexingTaskGeneration == generation else { return }
+                            let bucket = min(20, max(0, Int(fraction * 20)))
+                            guard bucket != self.displayedSemanticIndexProgressBucket else { return }
+                            self.displayedSemanticIndexProgressBucket = bucket
                             self.indexingProgress.semanticProgress = fraction
                             if fraction < 1 {
                                 self.indexingProgress.message = "Indexing semantic search (\(Int(fraction * 100))%)"

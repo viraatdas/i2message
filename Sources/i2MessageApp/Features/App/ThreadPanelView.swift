@@ -20,7 +20,7 @@ struct ThreadPanelView: View {
                             ThreadMessageRow(
                                 message: message,
                                 senderName: model.senderName(for: message),
-                                sender: model.contact(for: message.senderID),
+                                sender: model.contact(for: message),
                                 isRoot: index == 0
                             )
                             .id(message.id)
@@ -161,11 +161,7 @@ private struct ThreadMessageRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            if message.direction == .outgoing {
-                AvatarInitialsBubble()
-            } else {
-                AvatarView(contact: sender, size: 30)
-            }
+            AvatarView(contact: sender, size: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -202,19 +198,5 @@ private struct ThreadMessageRow: View {
             isRoot ? I2Palette.incomingBubble.opacity(0.55) : Color.clear,
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
-    }
-}
-
-/// A tiny neutral avatar stand-in for the current user in the thread pane.
-private struct AvatarInitialsBubble: View {
-    var body: some View {
-        Circle()
-            .fill(Color.accentColor.opacity(0.22))
-            .frame(width: 30, height: 30)
-            .overlay {
-                Text("You".prefix(1))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-            }
     }
 }

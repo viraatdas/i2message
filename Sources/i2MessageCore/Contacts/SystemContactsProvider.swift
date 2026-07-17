@@ -3,20 +3,33 @@ import Foundation
 
 public protocol ContactPhotoProviding: Sendable {
     func thumbnailData(for contactID: ContactID) async throws -> Data?
+    func currentUserThumbnailData() async throws -> Data?
+}
+
+public extension ContactPhotoProviding {
+    func currentUserThumbnailData() async throws -> Data? {
+        nil
+    }
 }
 
 public actor SystemContactsProvider: ContactProviding, ContactResolving, ContactPhotoProviding {
     private let store: CNContactStore
     private let now: @Sendable () -> Date
+    private let loadsThumbnailData: Bool
     private var contactsByID: [ContactID: Contact] = [:]
     private var contactsByNormalizedHandle: [String: Contact] = [:]
     private var thumbnailDataByID: [ContactID: Data] = [:]
     private var hasLoadedIndex = false
     private let fallbackResolver = FallbackContactResolver()
 
-    public init(store: CNContactStore = CNContactStore(), now: @escaping @Sendable () -> Date = Date.init) {
+    public init(
+        store: CNContactStore = CNContactStore(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        loadsThumbnailData: Bool = true
+    ) {
         self.store = store
         self.now = now
+        self.loadsThumbnailData = loadsThumbnailData
     }
 
     public func contacts(matching query: String, page: PageRequest) async throws -> Page<Contact> {
@@ -93,12 +106,26 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
     public func thumbnailData(for contactID: ContactID) async throws -> Data? {
         try Task.checkCancellation()
 
-        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
-            throw I2MessageError.permissionDenied(.contacts, reason: "Contacts access is required to load contact photos.")
+        // The initial contact load already validates authorization and fills
+        // the bounded thumbnail map. Avoid a TCC authorization IPC for every
+        // visible AvatarView once that cache exists.
+        if !hasLoadedIndex {
+            guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
+                throw I2MessageError.permissionDenied(.contacts, reason: "Contacts access is required to load contact photos.")
+            }
+            try loadAllContactsIfNeeded()
         }
-
-        try loadAllContactsIfNeeded()
         return thumbnailDataByID[contactID]
+    }
+
+    public func currentUserThumbnailData() async throws -> Data? {
+        try Task.checkCancellation()
+        try await ensureAuthorized()
+
+        let contact = try store.unifiedMeContactWithKeys(
+            toFetch: Self.keysToFetch(includeThumbnailData: true)
+        )
+        return contact.thumbnailImageData
     }
 
     private func ensureAuthorized() async throws {
@@ -139,7 +166,10 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
         }
 
         let predicate = CNContact.predicateForContacts(matchingName: query)
-        let contacts = try store.unifiedContacts(matching: predicate, keysToFetch: Self.keysToFetch())
+        let contacts = try store.unifiedContacts(
+            matching: predicate,
+            keysToFetch: Self.keysToFetch(includeThumbnailData: loadsThumbnailData)
+        )
         return contacts.map(mapContact)
     }
 
@@ -152,14 +182,16 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
         var indexedContactsByHandle: [String: Contact] = [:]
         var indexedThumbnails: [ContactID: Data] = [:]
 
-        let request = CNContactFetchRequest(keysToFetch: Self.keysToFetch())
+        let request = CNContactFetchRequest(
+            keysToFetch: Self.keysToFetch(includeThumbnailData: loadsThumbnailData)
+        )
         request.sortOrder = .userDefault
 
         try store.enumerateContacts(with: request) { cnContact, _ in
             let contact = self.mapContact(cnContact)
             indexedContactsByID[contact.id] = contact
 
-            if let thumbnail = cnContact.thumbnailImageData {
+            if self.loadsThumbnailData, let thumbnail = cnContact.thumbnailImageData {
                 indexedThumbnails[contact.id] = thumbnail
             }
 
@@ -225,8 +257,8 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
         )
     }
 
-    private static func keysToFetch() -> [CNKeyDescriptor] {
-        [
+    private static func keysToFetch(includeThumbnailData: Bool) -> [CNKeyDescriptor] {
+        var keys: [CNKeyDescriptor] = [
             // Everything CNContactFormatter needs (name order, contact type,
             // phonetic fields, …) — omitting it makes the formatter raise.
             CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
@@ -237,10 +269,13 @@ public actor SystemContactsProvider: ContactProviding, ContactResolving, Contact
             CNContactNicknameKey as CNKeyDescriptor,
             CNContactOrganizationNameKey as CNKeyDescriptor,
             CNContactPhoneNumbersKey as CNKeyDescriptor,
-            CNContactEmailAddressesKey as CNKeyDescriptor,
-            CNContactImageDataAvailableKey as CNKeyDescriptor,
-            CNContactThumbnailImageDataKey as CNKeyDescriptor
+            CNContactEmailAddressesKey as CNKeyDescriptor
         ]
+        if includeThumbnailData {
+            keys.append(CNContactImageDataAvailableKey as CNKeyDescriptor)
+            keys.append(CNContactThumbnailImageDataKey as CNKeyDescriptor)
+        }
+        return keys
     }
 }
 

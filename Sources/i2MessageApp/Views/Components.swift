@@ -200,8 +200,7 @@ struct AvatarView: View {
     var body: some View {
         ZStack {
             if let contact,
-               let data = model.contactThumbnails[contact.id],
-               let image = NSImage(data: data) {
+               let image = model.contactThumbnails[contact.id] {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
@@ -211,11 +210,17 @@ struct AvatarView: View {
                 Circle()
                     .fill(color(for: contact?.avatar?.colorSeed))
 
-                Text(contact?.avatar?.initials ?? initials)
-                    .font(.system(size: max(size * 0.34, 10), weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
+                if let initials {
+                    Text(initials)
+                        .font(.system(size: max(size * 0.34, 10), weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: max(size * 0.42, 9), weight: .medium))
+                        .foregroundStyle(.white.opacity(0.92))
+                }
             }
         }
         .frame(width: size, height: size)
@@ -225,17 +230,23 @@ struct AvatarView: View {
         .accessibilityHidden(true)
     }
 
-    private var initials: String {
-        guard let name = contact?.displayName, !name.isEmpty else {
-            return "?"
+    private var initials: String? {
+        if let avatarInitials = contact?.avatar?.initials.trimmingCharacters(in: .whitespacesAndNewlines),
+           !avatarInitials.isEmpty {
+            return avatarInitials
         }
-        return name
+        guard let name = contact?.displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            return nil
+        }
+        let value = name
             .split(separator: " ")
             .prefix(2)
             .compactMap(\.first)
             .map(String.init)
             .joined()
             .uppercased()
+        return value.isEmpty ? nil : value
     }
 
     private func color(for seed: String?) -> Color {

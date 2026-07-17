@@ -389,6 +389,9 @@ final class AppViewModelTests: XCTestCase {
 
         let sent = try XCTUnwrap(model.selectedMessages.last)
         XCTAssertEqual(sent.replyToMessageID, root.id)
+        let replier = try XCTUnwrap(model.contact(for: sent))
+        XCTAssertTrue(replier.isCurrentUser)
+        XCTAssertEqual(replier.id, model.dependencies.seed.currentUser.id)
         XCTAssertTrue(model.threadDraftText.isEmpty)
         XCTAssertEqual(model.transcriptScrollIntent, previousScrollIntent)
     }
@@ -894,6 +897,26 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(counts.completed, 0)
     }
 
+    func testCurrentUserAvatarLoadsMeCardThumbnail() async throws {
+        var dependencies = AppDependencies.test()
+        let expectedData = try Self.makeSamplePNGData()
+        let photoProvider = RecordingContactPhotoProvider(currentUserData: expectedData)
+        dependencies.contactPhotoProvider = photoProvider
+
+        let model = AppViewModel(dependencies: dependencies)
+        let currentUser = dependencies.seed.currentUser
+        model.requestContactThumbnail(for: currentUser)
+
+        for _ in 0..<100 where model.contactThumbnails[currentUser.id] == nil {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertNotNil(model.contactThumbnails[currentUser.id])
+        let calls = await photoProvider.calls()
+        XCTAssertEqual(calls.currentUser, 1)
+        XCTAssertTrue(calls.contacts.isEmpty)
+    }
+
     func testConcurrentLiveTailRefreshesShareRepositoryWork() async throws {
         var dependencies = AppDependencies.test()
         let repository = CountingDelayMessageRepository(base: dependencies.messageRepository)
@@ -1288,6 +1311,30 @@ private actor CancellableContactPhotoProvider: ContactPhotoProviding {
 
     func counts() -> (started: Int, cancelled: Int, completed: Int) {
         (started, cancelled, completed)
+    }
+}
+
+private actor RecordingContactPhotoProvider: ContactPhotoProviding {
+    private let currentUserData: Data?
+    private var contactIDs: [ContactID] = []
+    private var currentUserCalls = 0
+
+    init(currentUserData: Data?) {
+        self.currentUserData = currentUserData
+    }
+
+    func thumbnailData(for contactID: ContactID) async throws -> Data? {
+        contactIDs.append(contactID)
+        return nil
+    }
+
+    func currentUserThumbnailData() async throws -> Data? {
+        currentUserCalls += 1
+        return currentUserData
+    }
+
+    func calls() -> (contacts: [ContactID], currentUser: Int) {
+        (contactIDs, currentUserCalls)
     }
 }
 

@@ -438,7 +438,7 @@ private struct MessageBubble: View {
                     if model.isThreadRoot(message) {
                         ThreadIndicatorChip(
                             count: model.threadReplyCount(for: message),
-                            repliers: model.threadReplies(to: message.id).map { model.contact(for: $0.senderID) },
+                            repliers: model.threadReplies(to: message.id).map { model.contact(for: $0) },
                             lastReplyAt: model.threadReplies(to: message.id).last?.sentAt,
                             hasNewActivity: model.hasUnseenThreadReplies(message)
                         ) {

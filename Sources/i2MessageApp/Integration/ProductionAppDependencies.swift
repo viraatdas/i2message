@@ -19,10 +19,19 @@ extension AppDependencies {
             dataAccessPermissionManager: dataPermissionManager,
             systemPermissionManager: systemPermissionManager
         )
+        // Keep interaction reads isolated from full-history indexing. Each
+        // stack owns a separate actor-serialized SQLite connection and contact
+        // resolver, so navigation can never queue behind a corpus scan.
         let contacts = SystemContactsProvider()
+        let indexingContacts = SystemContactsProvider(loadsThumbnailData: false)
         let dataStack = MessagesDataAccessStack(
             configuration: configuration,
             contactProvider: contacts,
+            permissionManager: permissionManager
+        )
+        let indexingDataStack = MessagesDataAccessStack(
+            configuration: configuration,
+            contactProvider: indexingContacts,
             permissionManager: permissionManager
         )
         let handoff = MacOSMessagesHandoffController(automation: automation)
@@ -37,9 +46,9 @@ extension AppDependencies {
             policy: MessagingActionPolicy(allowsDirectSMSAutomation: true)
         )
         let corpusProvider = RepositorySearchIndexCorpusProvider(
-            conversations: dataStack.conversations,
-            messages: dataStack.messages,
-            contacts: dataStack.contacts
+            conversations: indexingDataStack.conversations,
+            messages: indexingDataStack.messages,
+            contacts: indexingDataStack.contacts
         )
         let searchService = LocalSearchService(
             indexURL: defaultSearchIndexURL(fileManager: fileManager),
