@@ -142,8 +142,13 @@ final class AppViewModelTests: XCTestCase {
         model.beginEditingMessage(original)
         XCTAssertEqual(model.messageEditDraft?.text, original.body.plainText)
         XCTAssertEqual(model.messageEditDraft?.editsLocally, true)
+        XCTAssertEqual(model.messageEditReadiness(), .unchanged)
+
+        model.updateMessageEditText("   \n")
+        XCTAssertEqual(model.messageEditReadiness(), .empty)
 
         model.updateMessageEditText(replacement)
+        XCTAssertEqual(model.messageEditReadiness(), .ready)
         XCTAssertTrue(model.canCompleteMessageEdit)
         await model.completeMessageEdit()
 
@@ -218,6 +223,40 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(recorded.open.map(\.conversationID), [conversation.id])
         XCTAssertNil(model.messageEditDraft)
         XCTAssertEqual(model.statusBanner?.title, "Edited text copied")
+    }
+
+    func testLiveMessageEditReadinessExpiresWhileEditorIsOpen() async throws {
+        var dependencies = AppDependencies.test()
+        dependencies.isLiveData = true
+        let model = AppViewModel(dependencies: dependencies)
+        await model.refreshEverything()
+
+        let conversationID = try XCTUnwrap(model.conversations.dropFirst().first?.id)
+        await model.selectConversation(conversationID)
+        let sentAt = Date().addingTimeInterval(-60)
+        let message = Message(
+            id: MessageID(rawValue: "test.live.expiring-edit"),
+            conversationID: conversationID,
+            senderID: dependencies.seed.currentUser.id,
+            body: .text("Original live text"),
+            direction: .outgoing,
+            service: .iMessage,
+            status: .sent,
+            sentAt: sentAt,
+            editHistory: [MessageEditVersion(text: "Earlier text", editedAt: sentAt)]
+        )
+
+        model.beginEditingMessage(message)
+        model.updateMessageEditText("Corrected before the deadline")
+
+        XCTAssertEqual(model.messageEditDraft?.editsRemaining, 4)
+        XCTAssertEqual(model.messageEditDraft?.editDeadline, sentAt.addingTimeInterval(15 * 60))
+        XCTAssertEqual(model.messageEditReadiness(at: sentAt.addingTimeInterval(15 * 60 - 1)), .ready)
+        XCTAssertEqual(
+            model.messageEditReadiness(at: sentAt.addingTimeInterval(15 * 60)),
+            .unavailable("Apple's 15-minute edit window has expired.")
+        )
+        XCTAssertFalse(model.canCompleteMessageEdit(at: sentAt.addingTimeInterval(15 * 60)))
     }
 
     func testLiveMessageEditRejectsExpiredWindowAndFifthPriorEdit() async throws {

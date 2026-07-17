@@ -1297,15 +1297,40 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCompleteMessageEdit: Bool {
-        guard let draft = messageEditDraft else { return false }
-        return !isCompletingMessageEdit
-            && !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && draft.text != draft.originalText
+        canCompleteMessageEdit(at: .now)
+    }
+
+    func canCompleteMessageEdit(at date: Date) -> Bool {
+        !isCompletingMessageEdit && messageEditReadiness(at: date).canComplete
+    }
+
+    func messageEditReadiness(at date: Date = .now) -> MessageEditReadiness {
+        guard let draft = messageEditDraft else {
+            return .unavailable("This message is no longer available to edit.")
+        }
+        guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .empty
+        }
+        guard draft.text != draft.originalText else {
+            return .unchanged
+        }
+        if let restriction = messageEditRestriction(
+            for: draft.message,
+            editsLocally: draft.editsLocally,
+            at: date
+        ) {
+            return .unavailable(restriction)
+        }
+        return .ready
     }
 
     func completeMessageEdit() async {
         guard let draft = messageEditDraft, canCompleteMessageEdit else { return }
-        if let restriction = messageEditRestriction(for: draft.message, editsLocally: draft.editsLocally) {
+        if let restriction = messageEditRestriction(
+            for: draft.message,
+            editsLocally: draft.editsLocally,
+            at: .now
+        ) {
             showBanner(tone: .warning, title: "Can't edit this message", message: restriction)
             messageEditDraft = nil
             return
@@ -1350,7 +1375,11 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func messageEditRestriction(for message: Message, editsLocally: Bool) -> String? {
+    private func messageEditRestriction(
+        for message: Message,
+        editsLocally: Bool,
+        at date: Date = .now
+    ) -> String? {
         guard message.direction == .outgoing else {
             return "Only messages you sent can be edited."
         }
@@ -1366,7 +1395,7 @@ final class AppViewModel: ObservableObject {
         guard message.editHistory.count < 5 else {
             return "Apple limits a sent message to five edits."
         }
-        if !editsLocally, Date().timeIntervalSince(message.sentAt) > 15 * 60 {
+        if !editsLocally, date.timeIntervalSince(message.sentAt) >= 15 * 60 {
             return "Apple's 15-minute edit window has expired."
         }
         return nil

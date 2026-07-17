@@ -103,6 +103,21 @@ struct MessageEditDraft: Identifiable, Equatable {
 
     var id: MessageID { message.id }
     var originalText: String { message.body.plainText }
+    var editsRemaining: Int { max(0, 5 - message.editHistory.count) }
+    var editDeadline: Date? {
+        editsLocally ? nil : message.sentAt.addingTimeInterval(15 * 60)
+    }
+}
+
+enum MessageEditReadiness: Equatable {
+    case unchanged
+    case empty
+    case unavailable(String)
+    case ready
+
+    var canComplete: Bool {
+        self == .ready
+    }
 }
 
 /// A link discovered inside a conversation's messages, shown in the Cmd+I info panel.
